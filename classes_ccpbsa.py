@@ -888,7 +888,8 @@ class Protein:
     def sasa(self):
         """Calculate the solvent accessible surface area using \"gmx sasa\"
         """
-        pass
+        tprs = [i[:-4]+'.tpr' for i in self.structures]
+
         self.energy_df['SAS'] /= self.n_structs
         self.energy_df.to_csv("Values.csv")
 
@@ -896,7 +897,8 @@ class Protein:
         """Calculate a upper limit of the entropy according to Schlitter's
         formula.
         """
-        pass
+        tprs = [i[:-4]+'.tpr' for i in self.structures]
+
         self.energy_df['-TS'] /= self.n_structs
         self.energy_df.to_csv("Values.csv")
 
