@@ -491,18 +491,15 @@ class Protein:
         energy_df
         """
         i_wt = np.zeros(self.n_structs)
-        wt = [s for s in self.structures if self.name == s]
+        wt = [s for s in self.structures if self.name in s]
 
         i = 0
         for s in wt:
 
             if "/" in s:
                 os.chdir('/'.join(s.split('/')[:-1]))
-#                print('/'.join(s.split('/')[:-1]))
-                tpr = [f for f in os.listdir() if '.tpr' == f[-4:]][0]
 
-            else:
-                tpr = [f for f in os.listdir() if '.tpr' == f[-4:]][0]
+            tpr = [f for f in os.listdir() if '.tpr' == f[-4:]][0]
 
             make_ndx = ['gmx', '-quiet', 'make_ndx', '-f', tpr]
             sasa_input = ['gmx', '-quiet', 'sasa',
@@ -514,22 +511,15 @@ class Protein:
             subprocess.run(sasa_input, input=b'0')
 
             areas = list(open("area.xvg", 'r'))[-1].split()[1:]
-            areas = [float(i) for i in area]
+            areas = [float(i) for i in areas]
             i_wt[i] = areas[2] + areas[1] - areas[0]
+            print(i_wt[i])
             i += 1
 
             os.chdir(self.maindir)
 
+        print(i_wt.mean())
         self.energy_df['PPIS'] = i_wt.mean()
-#        wt = self.energy_df.index[0]
-#        wt_structures = [s for s in self.structures if wt in s]
-#        print(wt_structures)
-
-#        Pseudo code
-#           Use wt protein structures
-#           make 1 index file with chain A and B
-#           subprocess.run(make_ndx, input=b'chain A\nchain B\nq')
-#           subprocess.run([gmx sasa -f struct.gro -n index.ndx -output "10 11" <<< 0])
 
 
     def set_pka(self, pka, pHexp=7, T=298.15):
