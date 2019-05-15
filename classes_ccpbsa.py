@@ -11,6 +11,13 @@ pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
 
+def calc_ddG(df1, df2, out="ddG.csv"):
+    """Calculate the mutational free energy based on the two .csv files given
+    to it.
+    """
+    pass
+
+
 def makedir(dirname):
     if not os.path.isdir(dirname):
         os.mkdir(dirname)
@@ -35,7 +42,9 @@ def unpack(lst):
 
 	return unpacked
 
-
+#TODO:
+#    Calculate affinity difference in one go. probably use indexing.
+#    Use gmx editconf with an indexfile to split molecule
 class Protein:
     """Contains all the attributes and methods to create the CC/PBSA workflow.
     Requires the programs \"CONCOORD\" and \"GROMACS 2019.2\". Python 3.7
