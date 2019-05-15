@@ -42,9 +42,9 @@ class Protein:
     module dependencies are numpy, pandas and python3-pymol.
     """
     def __init__(self, pdb_file, mut_list, flags,
-        min_mdp="/home/linkai/CC_PBSA/min.mdp",
-        energy_mdp="/home/linkai/CC_PBSA/energy.mdp", calculate='stability',
-        mdrun_table="/home/linkai/CC_PBSA/table4r-6-12.xvg"):
+        min_mdp="/Users/linkai/CC_PBSA/min.mdp",
+        energy_mdp="/Users/linkai/CC_PBSA/energy.mdp", calculate='stability',
+        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"):
         """Mandatory inputs:
         - The protein in a .pdb file to be used.
         - List of single amino acid (aa) mutations to intoduce to the protein
@@ -59,9 +59,10 @@ class Protein:
         Description of the attributes:
         - mut_df is a pandas dataframe
         """
+        self.mode = calculate
         self.pdb_file = pdb_file
-        self.structures = [pdb_file]
         self.name = pdb_file[:-4]
+        self.structures = [self.name+'/'+pdb_file]
         self.mut_df = self.parse_mutations(mut_list)
         self.parsed_flags = self.parse_flags(flags)
         self.n_structs = int(self.parsed_flags['CC']['DISCO FLAGS'] \
@@ -69,10 +70,22 @@ class Protein:
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
-        self.energy_df = pd.DataFrame(0,
-            columns=['SOLV', 'COUL', 'LJ', 'SAS', 'S'],
-            index=[self.name])
+
+        if self.mode == "stability":
+            self.energy_df = pd.DataFrame(0,
+                columns=['SOLV', 'COUL', 'LJ', 'SAS', 'S'],
+                index=[self.name])
+        elif self.mode == "affinity":
+            self.energy_df = pd.DataFrame(0,
+                columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
+                index=[self.name])
+
+        else:
+            raise Exception("Bad calculation mode. Please use either \
+                \"affinity\" or \"stability\"")
+
         self.energy_df.index.name = 'MUTATION'
+        self.tablename = "values.csv"
 #        self.cpt
         
         makedir(self.name)
@@ -134,17 +147,17 @@ class Protein:
         for line in content:
             if ';' in line:
                 line = line[:line.index(';')]
-    
+
             if len(line) > 0:
                 uncommented.append(' '.join(line.split()))
-    
+
     #    Indexes the file for where the flags are defined
         idx = [uncommented.index(j) for i in parsed_flags.values() for j in i]
         idx.append(len(uncommented))
-    
+
         i = 0
         for keys, vals in parsed_flags.items():
-    
+
             for prog in vals:
                 parsed_flags[keys][prog] = unpack([i.split('=') for i in \
                     uncommented[idx[i]+1:idx[i+1]]])
@@ -183,7 +196,7 @@ class Protein:
 
         return parsed_mut
 
-    
+
     def mutate(self):
         """Uses PyMOL and the list of mutations to mutate the wildtype protein.
         The format of the mutation instruction should be (in one letter code
@@ -193,7 +206,7 @@ class Protein:
             - A20G (for a monomer)
             - B_H10I (for a dimer with a chain named \"B\")
         """
-        self.structures.extend([i+".pdb" for i in self.mut_df.axes[0]])
+        self.structures.extend([i+'/'+i+".pdb" for i in self.mut_df.axes[0]])
         new_idx = list(self.energy_df.index)
         new_idx.extend([m for m in self.mut_df.axes[0]])
         self.energy_df = self.energy_df.reindex(new_idx, fill_value=0)
@@ -211,8 +224,8 @@ class Protein:
             cmd.reinitialize()
             makedir(mut_key)
             shutil.move(mut_key + ".pdb", mut_key)
-        
-        
+
+
     def log(self, fname, proc_obj):
         """Used to log some of GROMACS output
         """
@@ -227,36 +240,36 @@ class Protein:
         "flag_parse_output['CC']"). Make sure that \"CONCOORDRC.bash\" is
         sourced.
         """
-        for s in self.structures:
-            os.chdir(s[:-4])
-            dist_input = [
-                'dist',
-                '-p', '%s' % s,
-                '-op', '%s_dist.pdb' % s[:-4],
-                '-og', '%s_dist.gro' % s[:-4],
-                '-od', '%s_dist.dat' % s[:-4],
-            ]
-    
-            disco_input = [
-                'disco',
-                '-d', '%s_dist.dat' % s[:-4],
-                '-p', '%s_dist.pdb' % s[:-4],
-                '-op', '',
-                '-or', '%s_disco.rms' % s[:-4],
-                '-of', '%s_disco_Bfac.pdb' % s[:-4]
-            ]
-            dist_input.extend(self.parsed_flags['CC']['DIST FLAGS'])
-            disco_input.extend(self.parsed_flags['CC']['DISCO FLAGS'])
-            subprocess.run(dist_input, input=b'1\n1')
-            subprocess.run(disco_input)
-            
-            for n in range(1, self.n_structs+1):
-                nr = str(n)
-                makedir(nr)
-                shutil.move(nr+'.pdb', nr)
-                self.subdir.append(os.getcwd() + '/' + nr)
-
-            os.chdir('..')
+#        for s in self.structures:
+#            os.chdir(s[:-4])
+#            dist_input = [
+#                'dist',
+#                '-p', '%s' % s,
+#                '-op', '%s_dist.pdb' % s[:-4],
+#                '-og', '%s_dist.gro' % s[:-4],
+#                '-od', '%s_dist.dat' % s[:-4],
+#            ]
+#    
+#            disco_input = [
+#                'disco',
+#                '-d', '%s_dist.dat' % s[:-4],
+#                '-p', '%s_dist.pdb' % s[:-4],
+#                '-op', '',
+#                '-or', '%s_disco.rms' % s[:-4],
+#                '-of', '%s_disco_Bfac.pdb' % s[:-4]
+#            ]
+#            dist_input.extend(self.parsed_flags['CC']['DIST FLAGS'])
+#            disco_input.extend(self.parsed_flags['CC']['DISCO FLAGS'])
+#            subprocess.run(dist_input, input=b'1\n1')
+#            subprocess.run(disco_input)
+#            
+#            for n in range(1, self.n_structs+1):
+#                nr = str(n)
+#                makedir(nr)
+#                shutil.move(nr+'.pdb', nr)
+#                self.subdir.append(os.getcwd() + '/' + nr)
+#
+#            os.chdir('..')
 
         self.structures = [s[:-4]+'/'+str(nr)+'/'+str(nr)+'.pdb' \
             for s in self.structures for nr in range(1, self.n_structs+1)]
@@ -376,7 +389,7 @@ class Protein:
 
 #        Calculate the mean.
         self.energy_df['LJ'] /= self.n_structs
-        self.energy_df.to_csv("Values.csv")
+        self.energy_df.to_csv(self.tablename)
 
 
     def electrostatics(self):
@@ -386,7 +399,7 @@ class Protein:
         pass
         self.energy_df['SOLV'] /= self.n_structs
         self.energy_df['COUL'] /= self.n_structs
-        self.energy_df.to_csv("Values.csv")
+        self.energy_df.to_csv(self.tablename)
 
 
     def sasa(self):
@@ -418,7 +431,7 @@ class Protein:
             os.chdir(self.maindir)
 
         self.energy_df['SAS'] /= self.n_structs
-        self.energy_df.to_csv("Values.csv")
+        self.energy_df.to_csv(self.tablename)
 
 
     def schlitter(self):
@@ -445,7 +458,7 @@ class Protein:
             self.energy_df['S'][d] += float(entropy)
             os.chdir('..')
 
-        self.energy_df.to_csv("Values.csv")
+        self.energy_df.to_csv(self.tablename)
 
 
     def fullrun(self):
@@ -456,11 +469,82 @@ class Protein:
         self.mutate()
         self.concoord()
         self.minimize()
-        self.schlitter()
-        self.sasa()
-        self.electrostatics()
-        self.lj()
-        print(self.energy_df)
+
+        if self.mode == "stability":
+            self.schlitter()
+            self.sasa()
+            self.electrostatics()
+            self.lj()
+            print(self.energy_df)
+
+        elif self.mode == "affinity":
+            self.electrostatics()
+            self.lj()
+            print(self.energy_df)
+
+
+    def ppis(self):
+        """Calculate the protein-protein interaction surface I of a dimer using
+        the formula:
+            I = Surface(A) + Surface(B) - Surface(A-B)
+        This function only needs to be called once to fill all the rows in
+        energy_df
+        """
+        i_wt = np.zeros(self.n_structs)
+        wt = [s for s in self.structures if self.name == s]
+
+        i = 0
+        for s in wt:
+
+            if "/" in s:
+                os.chdir('/'.join(s.split('/')[:-1]))
+#                print('/'.join(s.split('/')[:-1]))
+                tpr = [f for f in os.listdir() if '.tpr' == f[-4:]][0]
+
+            else:
+                tpr = [f for f in os.listdir() if '.tpr' == f[-4:]][0]
+
+            make_ndx = ['gmx', '-quiet', 'make_ndx', '-f', tpr]
+            sasa_input = ['gmx', '-quiet', 'sasa',
+                '-output', '10', '11',
+                '-n', 'index.ndx',
+                '-s', s.split('/')[-1]]
+
+            subprocess.run(make_ndx, input=b'chain A\nchain B\nq\n')
+            subprocess.run(sasa_input, input=b'0')
+
+            areas = list(open("area.xvg", 'r'))[-1].split()[1:]
+            areas = [float(i) for i in area]
+            i_wt[i] = areas[2] + areas[1] - areas[0]
+            i += 1
+
+            os.chdir(self.maindir)
+
+        self.energy_df['PPIS'] = i_wt.mean()
+#        wt = self.energy_df.index[0]
+#        wt_structures = [s for s in self.structures if wt in s]
+#        print(wt_structures)
+
+#        Pseudo code
+#           Use wt protein structures
+#           make 1 index file with chain A and B
+#           subprocess.run(make_ndx, input=b'chain A\nchain B\nq')
+#           subprocess.run([gmx sasa -f struct.gro -n index.ndx -output "10 11" <<< 0])
+
+
+    def set_pka(self, pka, pHexp=7, T=298.15):
+        """Alters the value in energy_df["PKA"] (=∆G_pk) based on the following formula:
+            ∆G_pk = k_B * T * ln(10) * (pka - pHexp)
+        """
+        kB = 1.38064852e-26 # kJ/K
+        dgpk = kB * T * np.log(10) * (pka - pHexp)
+        
+        if self.mode == "affinity":
+            self.energy_df["PKA"] = dgpk
+
+        else:
+            print("Nothing changed")
+            pass
 
 
 class GXG(Protein):
@@ -470,43 +554,58 @@ class GXG(Protein):
     the Protein.
     """
     def __init__(self, flags,
-        min_mdp="/home/linkai/CC_PBSA/min.mdp",
-        energy_mdp="/home/linkai/CC_PBSA/energy.mdp",
-        mdrun_table="/home/linkai/CC_PBSA/table4r-6-12.xvg"):
+        min_mdp="/Users/linkai/CC_PBSA/min.mdp",
+        energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
+        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"):
         """Only the parameters need to be specified. Structures are the 20 GXG
         amino acids.
         """
-        self.parsed_flags = self.parse_flags(flags)
-        self.n_structs = int(self.parsed_flags['CC']['DISCO FLAGS'] \
-            [self.parsed_flags['CC']['DISCO FLAGS'].index('-n')+1])
-        self.e_mdp = energy_mdp
-        self.min_mdp = min_mdp
-        self.mdrun_table = mdrun_table
+        temppdb = open("GXG.pdb", 'w')
+        temppdb.close()
+        temptxt = open("temp.txt", 'w')
+        temptxt.close()
+        super().__init__("GXG.pdb", "temp.txt", flags)
+        os.remove("../temp.txt")
+        os.remove("../GXG.pdb")
+        shutil.rmtree("GXG/")
+        self.aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+#        self.parsed_flags = self.parse_flags(flags)
+#        self.n_structs = int(self.parsed_flags['CC']['DISCO FLAGS'] \
+#            [self.parsed_flags['CC']['DISCO FLAGS'].index('-n')+1])
+#        self.e_mdp = energy_mdp
+#        self.min_mdp = min_mdp
+#        self.mdrun_table = mdrun_table
         self.structures = []
+        self.energy_df = pd.DataFrame(0,
+            columns=['SOLV', 'COUL', 'LJ', 'SAS', 'S'],
+            index=["G%sG" % x for x in self.aa1])
+        self.energy_df.index.name = "GXG"
         self.subdir = []
-        
-        makedir('GXG')
-        os.chdir('GXG')
-        self.maindir = os.getcwd()
 
 
     def makepeps(self):
         """Create the tripeptides using PyMOL. Each peptide is saved in a
         separate directory similar to mutations in Protein.
         """
-        aa1 = list("ACDEFGHIKLMNPQRSTVWY")
-
-        for x in aa1:
+        for x in self.aa1:
             gxg = "G%sG" % x
             cmd.fab(gxg, gxg)
             cmd.save(gxg+'.pdb')
             cmd.reinitialize()
-            makedir(gxg)
-            shutil.move(gxg+'.pdb', gxg)
             self.structures.append(gxg+'.pdb')
 
 
+    def create_table(self):
+        """Use the table created from fullrun() (or its components) to create
+        lookup-tables for energy differences in the unfolded state.
+        """
+        pass
+
+
 if __name__ == '__main__':
-    x = Protein("1pga.pdb", "mut.txt", "param.txt")
-    print(x.__dict__)
-#    x.fullrun()
+    x = Protein("1bxi.pdb", "mut.txt", "param.txt")
+    x.mutate()
+#    x.concoord()
+    x.minimize()
+    x.ppis()
+    print(x.energy_df)
