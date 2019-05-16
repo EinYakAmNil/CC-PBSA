@@ -11,6 +11,14 @@ pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
 
+def log(fname, proc_obj):
+    """Used to log some of GROMACS output
+    """
+    log_file = open(fname, 'a')
+    log_file.write(proc_obj.stdout.decode('utf-8'))
+    log_file.close()
+
+
 def gmx(prog, **kwargs):
     """Uses the subprocess module to run a gmx (GROMACS) program. Returns the
     process object. **kwargs will be passed to subprocess.run
@@ -74,14 +82,94 @@ class DataGenerator:
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
-        pass
+
+#        Initialize working directory.
+        makedir(self.__repr__())
+        shutil.copy(self.wt, self.__repr__())
+        os.chdir(self.__repr__())
+        self.maindir = os.getcwd()
+        makedir(self.__repr__())
+        self.wt = self + ".pdb"
+        shutil.move(self.wt, self.__repr__())
+        self.wdlist = [self.maindir+'/'+self.__repr__()]
+
+
+    def __repr__(self):
+        return self.wt.split('/')[-1][:-4]
+
+
+    def __add__(self, other):
+        """Makes it possible to add this object to strings. Not much else makes
+        sense at the moment and it makes source syntax more readable.
+        """
+        return self.__repr__() + other
+
+
+    def __len__(self):
+        return int(self.flags['CC']['DISCO FLAGS'] \
+            [self.flags['CC']['DISCO FLAGS'].index('-n')+1])
 
 
     def parse_flags(self, flags_raw):
         """Parse the list of flags in the .txt flag file for the programs.
-        Called upon initialization.
+        Called upon initialization. Returns a
+        dictionary in the following format:
+
+        parsed_flags = {
+            'CC': {
+                'DIST FLAGS': [list of flags],
+                'DISCO FLAGS': [list of flags]
+            },
+            'gmx': {
+                'PDB2GMX FLAGS': [list of flags],
+                'EDITCONF FLAGS': [list of flags],
+                'GROMPP FLAGS': [list of flags],
+                'MDRUN FLAGS': [list of flags],
+            }
+        }
+        
+        The list can then be extended directly to other input lists for
+        subprocess.run().
         """
-        pass
+        parsed_flags = {
+            'CC': {
+                'DIST FLAGS': [],
+                'DISCO FLAGS': []
+            },
+            'gmx': {
+                'PDB2GMX FLAGS': [],
+                'EDITCONF FLAGS': [],
+                'GROMPP FLAGS': [],
+                'MDRUN FLAGS': [],
+            }
+        }
+
+#        Search for this file just in case it is not in the current directory of
+#        the class.
+        flag_file = list(open(flags_raw, 'r'))
+        content = [line[:line.index('\n')] for line in flag_file]
+        uncommented = []
+
+        for line in content:
+            if ';' in line:
+                line = line[:line.index(';')]
+
+            if len(line) > 0:
+                uncommented.append(' '.join(line.split()))
+
+    #    Indexes the file for where the flags are defined
+        idx = [uncommented.index(j) for i in parsed_flags.values() for j in i]
+        idx.append(len(uncommented))
+
+        i = 0
+        for keys, vals in parsed_flags.items():
+
+            for prog in vals:
+                parsed_flags[keys][prog] = unpack([i.split('=') for i in \
+                    uncommented[idx[i]+1:idx[i+1]]])
+                i += 1
+    
+        return parsed_flags
 
 
     def parse_mutlist(self, mutlist_raw):
@@ -128,16 +216,22 @@ class DataGenerator:
         Does not accuratly mutate if input structure or mutation instructions
         are flawed. WARNING: No specific message is given if that happens. Best
         to check if the residues in the .pdb file are correctly numbered.
+        Updates working directories list (wdlist).
         """
-        pass
-
-
-    def log(self, fname, proc_obj):
-        """Used to log some of GROMACS output
-        """
-        log_file = open(fname, 'a')
-        log_file.write(proc_obj.stdout.decode('utf-8'))
-        log_file.close()
+        for m in range(len(self.mut_df)):
+            cmd.load(self+'/'+self.wt)
+            cmd.wizard('mutagenesis')
+            mut_key = self.mut_df.axes[0][m]
+#            name = "%s_%s" % (self, mut_key)
+            cmd.get_wizard().do_select('///%s/%s' %
+                (self.mut_df["Chain"][m], str(self.mut_df["Residue"][m])))
+            cmd.get_wizard().set_mode(self.mut_df["Mutation"][m])
+            cmd.get_wizard().apply()
+            cmd.save(mut_key + ".pdb")
+            cmd.reinitialize()
+            makedir(mut_key)
+            shutil.move(mut_key + ".pdb", mut_key)
+            self.wdlist.append(self.maindir+'/'+mut_key)
 
     
     def concoord(self):
@@ -146,7 +240,39 @@ class DataGenerator:
         as "flag_parse_output['CC']"). Make sure that \"CONCOORDRC.bash\" is
         sourced.
         """
-        pass
+#        for s in self.structures:
+#            os.chdir(s[:-4])
+#            dist_input = [
+#                'dist',
+#                '-p', '%s' % s,
+#                '-op', '%s_dist.pdb' % s[:-4],
+#                '-og', '%s_dist.gro' % s[:-4],
+#                '-od', '%s_dist.dat' % s[:-4],
+#            ]
+#    
+#            disco_input = [
+#                'disco',
+#                '-d', '%s_dist.dat' % s[:-4],
+#                '-p', '%s_dist.pdb' % s[:-4],
+#                '-op', '',
+#                '-or', '%s_disco.rms' % s[:-4],
+#                '-of', '%s_disco_Bfac.pdb' % s[:-4]
+#            ]
+#            dist_input.extend(self.parsed_flags['CC']['DIST FLAGS'])
+#            disco_input.extend(self.parsed_flags['CC']['DISCO FLAGS'])
+#            subprocess.run(dist_input, input=b'1\n1')
+#            subprocess.run(disco_input)
+#            
+#            for n in range(1, self.n_structs+1):
+#                nr = str(n)
+#                makedir(nr)
+#                shutil.move(nr+'.pdb', nr)
+#                self.subdir.append(os.getcwd() + '/' + nr)
+#
+#            os.chdir('..')
+
+        self.wdlist = [d+'/'+str(nr) \
+            for d in self.wdlist for nr in range(1, len(self)+1)]
 
 
     def minimize(self):
@@ -192,4 +318,11 @@ class DataGenerator:
 
 if __name__ == '__main__':
     x = DataGenerator("1pga.pdb", "mut.txt", "param.txt")
-    print(x.mut_df)
+    print(x.wdlist)
+    x.mutate()
+    print(x.wdlist)
+    x.concoord()
+    print(x.wdlist)
+
+#    for i in x.wdlist:
+#        print(i[len(x.maindir):])
