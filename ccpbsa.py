@@ -10,6 +10,7 @@ import pymol
 pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
+
 def int_in_str(lst):
     converted = ''.join([item for item in lst if item.isdigit()])
     return int(converted)
@@ -68,7 +69,7 @@ class DataGenerator:
     the flags for each programm (CONCOORD/GROMACS) and optionally user specific
     .mdp files and tables for GROMACS.
     """
-    def __init__(self, wt, mutlist, flags, calculate='stability',
+    def __init__(self, wt, mutlist, flags, calculate='stability', chains=['A'],
         min_mdp="/Users/linkai/CC_PBSA/min.mdp",
         energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
         mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"
@@ -85,6 +86,10 @@ class DataGenerator:
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
+
+#        Parameters to indicate the state of the structures.
+        self.minimized = False
+        self.chains = chains
 
 #        Initialize working directory.
         makedir(self.__repr__())
@@ -240,45 +245,88 @@ class DataGenerator:
         as "flag_parse_output['CC']"). Make sure that \"CONCOORDRC.bash\" is
         sourced.
         """
-        for s in self.structures:
-            os.chdir(s[:-4])
-            dist_input = [
-                'dist',
-                '-p', '%s' % s,
-                '-op', '%s_dist.pdb' % s[:-4],
-                '-og', '%s_dist.gro' % s[:-4],
-                '-od', '%s_dist.dat' % s[:-4],
-            ]
-    
-            disco_input = [
-                'disco',
-                '-d', '%s_dist.dat' % s[:-4],
-                '-p', '%s_dist.pdb' % s[:-4],
-                '-op', '',
-                '-or', '%s_disco.rms' % s[:-4],
-                '-of', '%s_disco_Bfac.pdb' % s[:-4]
-            ]
-            dist_input.extend(self.parsed_flags['CC']['DIST FLAGS'])
-            disco_input.extend(self.parsed_flags['CC']['DISCO FLAGS'])
-            subprocess.run(dist_input, input=b'1\n1')
-            subprocess.run(disco_input)
+        for d in self.wdlist:
+            os.chdir(d)
+            fpf = d.split('/')[-1] # fpf stands for file prefix
+            print(fpf)
+#            dist_input = [
+#                'dist',
+#                '-p', '%s' % fpf+'.pdb',
+#                '-op', '%s_dist.pdb' % fpf,
+#                '-og', '%s_dist.gro' % fpf,
+#                '-od', '%s_dist.dat' % fpf,
+#            ]
+#    
+#            disco_input = [
+#                'disco',
+#                '-d', '%s_dist.dat' % fpf,
+#                '-p', '%s_dist.pdb' % fpf,
+#                '-op', '',
+#                '-or', '%s_disco.rms' % fpf,
+#                '-of', '%s_disco_Bfac.pdb' % fpf
+#            ]
+#            dist_input.extend(self.flags['CC']['DIST FLAGS'])
+#            disco_input.extend(self.flags['CC']['DISCO FLAGS'])
+#            subprocess.run(dist_input, input=b'1\n1')
+#            subprocess.run(disco_input)
             
-            for n in range(1, self.n_structs+1):
+            for n in range(1, len(self)+1):
                 nr = str(n)
                 makedir(nr)
-                shutil.move(nr+'.pdb', nr)
-                self.subdir.append(os.getcwd() + '/' + nr)
+                shutil.copy(fpf+'.pdb', nr+'/'+nr+'.pdb')
+#                shutil.move(nr+'.pdb', nr)
 
-            os.chdir('..')
+            os.chdir(self.maindir)
 
-        self.wdlist = [d+'/'+str(nr) \
-            for d in self.wdlist for nr in range(1, len(self)+1)]
+        self.wdlist = [d+'/'+str(n) \
+            for d in self.wdlist for n in range(1, len(self)+1)]
 
 
     def minimize(self):
         """Minimzes all .pdb files in self.wdlist.
         """
-        pass
+        for d in self.wdlist:
+            os.chdir(d)
+            fpf = d.split('/')[-1]
+            gmxprocs = [
+                ['pdb2gmx', '-f', fpf+'.pdb'],
+                ['editconf'],
+                ['grompp', '-f', self.min_mdp],
+                ['mdrun', \
+                    '-tablep', self.mdrun_table, '-table', self.mdrun_table]
+            ]
+            gmxprocs = [unpack(list(proc)) \
+                for proc in zip(gmxprocs, self.flags['gmx'].values())]
+
+            for proc in gmxprocs:
+                gmx(proc)
+
+            if self.mode == 'affinity':
+                chain_selection = [b'chain %b\n' % bytes(c, 'utf-8') for c in self.chains]
+                chain_selection = b''.join(chain_selection) + b'q\n'
+                gmx(['make_ndx', '-f', 'topol.tpr'], input=chain_selection)
+#
+                for cn in range(len(self.chains)):
+                    select = bytes(str(cn)+'\n', 'utf-8')
+                    trjconv_select = [
+                        'trjconv', '-f', '-out.gro',
+                        '-n', 'index.ndx',
+                        '-o', 'chain_%s.gro' % self.chains[cn]
+                    ]
+                    gmx(trjconv_select, input=bytes(str(9+cn), 'utf-8'))
+
+#                    Change topology file for grompp and mdrun.
+                    with open("topol.top", 'r') as topl:
+                        l = topl.readlines()
+
+                    l = 
+                    gmx(gmxprocs[1]+['-o', 'chain_%s_out.gro' % self.chains[cn]],
+                        input=box_selection)
+                    gmx(gmxprocs[2] +) <++>
+
+            os.chdir(self.maindir)
+
+        self.minimized = True
 
 
     def electrostatics(self):
@@ -287,9 +335,17 @@ class DataGenerator:
 
     def lj(self):
         """calculates the single point Lennard Jones Energy (1-4 and
-        shortrange) of all self.structures
+        shortrange) of all self.structures.
         """
-        pass
+        ERRORSTR = """Bad energy values from unminimized structures.
+        Change .minimized to True or run the minimize method first.
+        Make sure the structures are named confout.gro.
+        """
+        assert self.minimized == True, ERRORSTR
+
+#        for d in self.wdlist:
+#            os.chdir(d)
+
 
 
     def area(self):
@@ -317,8 +373,11 @@ class DataGenerator:
 
 
 if __name__ == '__main__':
-    x = DataGenerator("1pga.pdb", "mut.txt", "param.txt")
-    x.mutate()
+    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
+        chains=['A', 'B'])
+#    x.mutate()
     x.concoord()
+    x.minimize()
+#    x.lj()
 #    for i in x.wdlist:
 #        print(i[len(x.maindir):])
