@@ -10,6 +10,10 @@ import pymol
 pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
+ERRORSTR = """Bad energy values from unminimized structures.
+Change .minimized to True or run the minimize method first.
+"""
+
 
 def int_in_str(lst):
     converted = ''.join([item for item in lst if item.isdigit()])
@@ -248,7 +252,6 @@ class DataGenerator:
         for d in self.wdlist:
             os.chdir(d)
             fpf = d.split('/')[-1] # fpf stands for file prefix
-            print(fpf)
 #            dist_input = [
 #                'dist',
 #                '-p', '%s' % fpf+'.pdb',
@@ -307,22 +310,40 @@ class DataGenerator:
                 gmx(['make_ndx', '-f', 'topol.tpr'], input=chain_selection)
 #
                 for cn in range(len(self.chains)):
-                    select = bytes(str(cn)+'\n', 'utf-8')
+                    select = bytes(str(10+cn), 'utf-8')
+                    chainbox = "chain_%s.gro" % self.chains[cn]
+
                     trjconv_select = [
-                        'trjconv', '-f', '-out.gro',
+                        'trjconv', '-f', 'out.gro',
                         '-n', 'index.ndx',
-                        '-o', 'chain_%s.gro' % self.chains[cn]
+                        '-o', chainbox
                     ]
-                    gmx(trjconv_select, input=bytes(str(9+cn), 'utf-8'))
+                    gmx(trjconv_select, input=select)
+
+#                    Create the run file for the chain and minimize it.
+                    chaintpr = "chain_%s.tpr"  % self.chains[cn]
 
 #                    Change topology file for grompp and mdrun.
                     with open("topol.top", 'r') as topl:
                         l = topl.readlines()
 
-                    l = 
-                    gmx(gmxprocs[1]+['-o', 'chain_%s_out.gro' % self.chains[cn]],
-                        input=box_selection)
-                    gmx(gmxprocs[2] +) <++>
+                    topline = cn-len(self.chains)
+                    l[-len(self.chains):] = [';' + line if line != l[topline] \
+                            else line for line in l[-len(self.chains):]]
+
+                    with open("topol.top", 'w') as topl:
+                        topl.writelines(l)
+
+                    gmx(gmxprocs[2] + ['-c', chainbox, '-o', chaintpr])
+                    gmx(gmxprocs[3] + ['-s', chaintpr, '-deffnm',
+                        "chain_%s_confout" % self.chains[cn]])
+
+#                    Revert the changes in the topol.top file.
+                    l[-len(self.chains):] = [line[1:]  if line != l[topline] \
+                            else line for line in l[-len(self.chains):]]
+
+                    with open("topol.top", 'w') as topl:
+                        topl.writelines(l)
 
             os.chdir(self.maindir)
 
@@ -337,15 +358,70 @@ class DataGenerator:
         """calculates the single point Lennard Jones Energy (1-4 and
         shortrange) of all self.structures.
         """
-        ERRORSTR = """Bad energy values from unminimized structures.
-        Change .minimized to True or run the minimize method first.
-        Make sure the structures are named confout.gro.
-        """
         assert self.minimized == True, ERRORSTR
 
-#        for d in self.wdlist:
-#            os.chdir(d)
+        for d in self.wdlist:
+            os.chdir(d)
 
+            gmxprocs = [
+                ['grompp', '-f', self.e_mdp, '-c', "confout.gro", '-o', 'sp.tpr'],
+                ['mdrun', '-s', 'sp.tpr',
+                    '-rerun', "confout.gro",
+                    '-deffnm', 'sp']
+            ]
+
+            gmxprocs = [unpack(list(proc)) \
+                for proc in zip(gmxprocs, list(self.flags['gmx'].values())[-2:])]
+
+            for proc in gmxprocs:
+                gmx(proc)
+
+            energy = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
+                input=b'5\n7', stdout=subprocess.PIPE)
+            log("lj.log", energy)
+
+            if self.mode == 'affinity':
+
+                for cn in range(len(self.chains)):
+                    ccout = "chain_%s_confout.gro" % self.chains[cn]
+                    chaintpr = "chain_%s_lj.tpr"  % self.chains[cn]
+
+                    with open("topol.top", 'r') as topl:
+                        l = topl.readlines()
+
+                    topline = cn-len(self.chains)
+                    l[-len(self.chains):] = [';' + line if line != l[topline] \
+                            else line for line in l[-len(self.chains):]]
+
+                    with open("topol.top", 'w') as topl:
+                        topl.writelines(l)
+
+                    gmxprocs = [
+                        ['grompp', '-f', self.e_mdp, '-c', ccout, '-o', chaintpr],
+                        ['mdrun', '-s', chaintpr, '-rerun', ccout,
+                            '-deffnm', "chain_%s_sp" % self.chains[cn]]
+                    ]
+
+                    gmxprocs = [unpack(list(proc)) \
+                        for proc in zip(gmxprocs,
+                            list(self.flags['gmx'].values())[-2:])]
+
+                    for proc in gmxprocs:
+                        gmx(proc)
+
+                    energy = gmx(['energy',
+                        '-f', 'chain_%s_sp.edr' % self.chains[cn],
+                        '-sum', 'yes'], input=b'5\n7', stdout=subprocess.PIPE)
+                    log("chain_%s_lj.log" % self.chains[cn], energy)
+
+#                    Revert the changes in the topol.top file.
+                    l[-len(self.chains):] = [line[1:]  if line != l[topline] \
+                            else line for line in l[-len(self.chains):]]
+
+                    with open("topol.top", 'w') as topl:
+                        topl.writelines(l)
+
+            os.chdir(self.maindir)
 
 
     def area(self):
@@ -354,14 +430,44 @@ class DataGenerator:
         ensemble will be used and the values for the interaction surface will
         be written into the .xvg file
         """
-        pass
+        assert self.minimized == True, ERRORSTR
+
+        sasa = ['sasa', '-s', 'confout.gro']
+
+        for d in self.wdlist:
+            os.chdir(d)
+
+            if self.mode == 'affinity':
+                gmx(sasa + ['-n', 'index.ndx', '-output', '10', '11'],
+                    input=b'0')
+
+            else:
+                gmx(sasa, input=b'0')
+
+            os.chdir(self.maindir)
 
 
     def schlitter(self):
         """Calculates an upper limit of the entropy according to Schlitter's
         formula. Used in .fullrun() if the mode is stability
         """
-        pass
+        assert self.minimized == True, ERRORSTR
+        trjcat = ['trjcat', '-cat', 'yes', '-f']
+        covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
+        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
+        ensembles = unpack([self.__repr__(), list(self.mut_df.index)])
+
+        for en in ensembles:
+            os.chdir(en)
+            trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
+                for n in range(len(self))]
+
+            gmx(trjcat+trrs)
+            gmx(covar+[self.maindir+'/'+en+"/1/confout.gro"], input=b'0')
+            entropy = gmx(anaeig, stdout=subprocess.PIPE)
+            log('entropy.log', entropy)
+
+            os.chdir(self.maindir)
 
 
     def fullrun(self):
@@ -369,15 +475,33 @@ class DataGenerator:
         CONCOORD structures and other parameters. Methods used will depend on
         the mode chosen (stability/affinity).
         """
-        pass
+        if self.mode == 'stability':
+            self.mutate()
+            self.concoord()
+            self.minimize()
+            self.electrostatics()
+            self.lj()
+            self.area()
+            self.entropy()
+
+        elif self.mode == 'affinity':
+            self.mutate()
+            self.concoord()
+            self.minimize()
+            self.electrostatics()
+            self.lj()
+            self.area()
 
 
 if __name__ == '__main__':
     x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
         chains=['A', 'B'])
-#    x.mutate()
-    x.concoord()
-    x.minimize()
-#    x.lj()
+    x.fullrun()
+
+    os.chdir('..')
+
+    y = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
+    y.fullrun()
+    
 #    for i in x.wdlist:
 #        print(i[len(x.maindir):])
