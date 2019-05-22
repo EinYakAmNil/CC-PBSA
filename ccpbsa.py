@@ -279,8 +279,8 @@ class DataGenerator:
             for n in range(1, len(self)+1):
                 nr = str(n)
                 makedir(nr)
-                shutil.copy(fpf+'.pdb', nr+'/'+nr+'.pdb')
-#                shutil.move(nr+'.pdb', nr)
+#                shutil.copy(fpf+'.pdb', nr+'/'+nr+'.pdb')
+                shutil.move(nr+'.pdb', nr)
 
             os.chdir(self.maindir)
 
