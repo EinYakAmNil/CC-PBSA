@@ -1,7 +1,9 @@
-"""Code for CC/PBSA, a fast tool for estimating mutational free energy
+"""Code for CC/PBSA, a fast tool for estimating folding free energy
 differences.
 """
+import glob
 import os
+import re
 import shutil
 import subprocess
 import numpy as np
@@ -83,10 +85,11 @@ class DataGenerator:
         self.maindir will be the directory to which each function call returns
         to after completing.
         """
-        self.mode = calculate
-        self.wt = wt
+#        Attributes on which other classes depend on are marked by empty comment
+        self.mode = calculate #
+        self.wt = wt #
         self.flags = self.parse_flags(flags)
-        self.mut_df = self.parse_mutlist(mutlist)
+        self.mut_df = self.parse_mutlist(mutlist) #
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
@@ -103,7 +106,7 @@ class DataGenerator:
         makedir(self.__repr__())
         self.wt = self + ".pdb"
         shutil.move(self.wt, self.__repr__())
-        self.wdlist = [self.maindir+'/'+self.__repr__()]
+        self.wdlist = [self.maindir+'/'+self.__repr__()] #
 
 
     def __repr__(self):
@@ -252,26 +255,26 @@ class DataGenerator:
         for d in self.wdlist:
             os.chdir(d)
             fpf = d.split('/')[-1] # fpf stands for file prefix
-#            dist_input = [
-#                'dist',
-#                '-p', '%s' % fpf+'.pdb',
-#                '-op', '%s_dist.pdb' % fpf,
-#                '-og', '%s_dist.gro' % fpf,
-#                '-od', '%s_dist.dat' % fpf,
-#            ]
-#    
-#            disco_input = [
-#                'disco',
-#                '-d', '%s_dist.dat' % fpf,
-#                '-p', '%s_dist.pdb' % fpf,
-#                '-op', '',
-#                '-or', '%s_disco.rms' % fpf,
-#                '-of', '%s_disco_Bfac.pdb' % fpf
-#            ]
-#            dist_input.extend(self.flags['CC']['DIST FLAGS'])
-#            disco_input.extend(self.flags['CC']['DISCO FLAGS'])
-#            subprocess.run(dist_input, input=b'1\n1')
-#            subprocess.run(disco_input)
+            dist_input = [
+                'dist',
+                '-p', '%s' % fpf+'.pdb',
+                '-op', '%s_dist.pdb' % fpf,
+                '-og', '%s_dist.gro' % fpf,
+                '-od', '%s_dist.dat' % fpf,
+            ]
+    
+            disco_input = [
+                'disco',
+                '-d', '%s_dist.dat' % fpf,
+                '-p', '%s_dist.pdb' % fpf,
+                '-op', '',
+                '-or', '%s_disco.rms' % fpf,
+                '-of', '%s_disco_Bfac.pdb' % fpf
+            ]
+            dist_input.extend(self.flags['CC']['DIST FLAGS'])
+            disco_input.extend(self.flags['CC']['DISCO FLAGS'])
+            subprocess.run(dist_input, input=b'1\n1')
+            subprocess.run(disco_input)
             
             for n in range(1, len(self)+1):
                 nr = str(n)
@@ -286,7 +289,9 @@ class DataGenerator:
 
 
     def minimize(self):
-        """Minimzes all .pdb files in self.wdlist.
+        """Minimzes all .pdb files in self.wdlist. Parameters for minimization
+        are set at the creation of the object. Default .mdp and .xvg tables are
+        given, but can be changed if another path is specified.
         """
         for d in self.wdlist:
             os.chdir(d)
@@ -482,7 +487,7 @@ class DataGenerator:
             self.electrostatics()
             self.lj()
             self.area()
-            self.entropy()
+            self.schlitter()
 
         elif self.mode == 'affinity':
             self.mutate()
@@ -493,15 +498,146 @@ class DataGenerator:
             self.area()
 
 
+class DataCollector:
+    """After a fullrun of DataGenerator, the object can be parsed to this class
+    to search for the relevant files in which energy values are supposed to be
+    stored. Also contains methods to create .csv tables for calculation of
+    folding free energy differences between wildtype and mutant protein.
+    """
+    def __init__(self, data_obj):
+        """Pass the DataGenerator object to initialize. This way all the
+        directories that contains the data is known without much searching.
+        """
+        pattern = re.compile("<class '__.+__.DataGenerator'>")
+        assert pattern.match(str(type(data_obj))), "Not a DataGenerator."
+
+        self.maindir = data_obj.maindir
+        os.chdir(self.maindir)
+
+        self.n = len(data_obj)
+
+        if data_obj.mode == 'stability':
+            self.ener_df = pd.DataFrame(0.0, 
+                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+                index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
+            )
+
+        else:
+            self.ener_df = pd.DataFrame(0.0, 
+                columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
+                index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
+            )
+
+
+    def __len__(self):
+        """Returns the number of structures generated by CONCOORD
+        """
+        return self.n
+        
+
+    def search_lj(self):
+        """Find the files in which the Lennard-Jones energies are supposed to
+        be written in and save the parsed values in ener_df.
+        """
+        tail = "tail -q -n 1 ".split()
+        for d in self.ener_df.index:
+            os.chdir(d)
+            files = glob.glob("*/lj.log")
+            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
+            parsed = [float(i.split()[1]) for i in \
+                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+            self.ener_df['LJ'][d] = np.array(parsed).mean()
+            os.chdir(self.maindir)
+
+
+    def search_es(self):
+        """Find the files in which the solvation energy and the Coulomb
+        potential are supposed to be written in and save the parsed values in
+        ener_df.
+        """
+        pass
+
+
+    def search_area(self):
+        """Find the files in which the (interaction-)area (normally area.xvg)
+        potential are supposed to be written in and save the parsed values in
+        ener_df.
+        """
+        tail = "tail -q -n 1 ".split()
+        for d in self.ener_df.index:
+            os.chdir(d)
+            files = glob.glob("*/area.xvg")
+            areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
+            parsed = [float(i.split()[1]) for i in \
+                areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
+            self.ener_df['SAS'][d] = np.array(parsed).mean()
+            os.chdir(self.maindir)
+
+
+    def search_entropy(self):
+        """Find the files in which the entropy according the Schlitter's
+        formula are supposed to be written in and save the parsed values in
+        ener_df.
+        """
+        head = "head -n 1 entropy.log".split()
+        for d in self.ener_df.index:
+            os.chdir(d)
+            entropy = subprocess.run(head, stdout=subprocess.PIPE)
+            entropy = entropy.stdout.decode('utf-8')
+            valstart = entropy.index('is ')+3
+            valend = entropy.index(' J/mol')
+            entropy = float(entropy[valstart:valend])
+            self.ener_df['-TS'][d] = np.array(-300 * entropy)
+            os.chdir(self.maindir)
+
+
+    def ffed(self, alpha=0, beta=0, gamma=0, tau=0, c=0):
+        """Calculate the folding free energy difference. For the stability
+        calculation, a table with values of GXG tripeptides needs to be
+        supplied.
+        """
+        ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=self.ener_df.index[1:]
+        )
+        
+        for i in ddG.index:
+            ddG['SOLV'][i] = alpha * (self.ener_df['SOLV'][i] - \
+                self.ener_df['SOLV'][0])
+            ddG['COUL'][i] = alpha * (self.ener_df['COUL'][i] - \
+                self.ener_df['COUL'][0])
+            ddG['LJ'][i] = beta * (self.ener_df['LJ'][i] - \
+                self.ener_df['LJ'][0])
+            ddG['SAS'][i] = gamma * (self.ener_df['SAS'][i] - \
+                self.ener_df['SAS'][0])
+            ddG['-TS'][i] = tau * (self.ener_df['-TS'][i] - \
+                self.ener_df['-TS'][0])
+            ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
+                ddG['LJ'][i] + ddG['SAS'][i] + ddG['-TS'][i]
+
+
 if __name__ == '__main__':
-    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
-        chains=['A', 'B'])
-    x.fullrun()
+#    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
+#        chains=['A', 'B'])
+#    x.fullrun()
+#
+#    os.chdir('..')
 
-    os.chdir('..')
-
-    y = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
+    y = DataGenerator("1stn.pdb", "mut3.txt", "param.txt")
     y.fullrun()
+#    y.mutate()
+#    y.concoord()
+#    y.minimize()
+#    y.lj()
+#    y.area()
+#    y.schlitter()
+    x = DataCollector(y)
+    print("values")
+    x.search_lj()
+    x.search_area()
+    x.search_entropy()
+    print(x.ener_df)
+    x.ffed(1, 1, 1, 1, 1)
     
 #    for i in x.wdlist:
 #        print(i[len(x.maindir):])
