@@ -25,7 +25,13 @@ def log(fname, proc_obj):
     """Used to log some of GROMACS output
     """
     log_file = open(fname, 'a')
-    log_file.write(proc_obj.stdout.decode('utf-8'))
+
+    if hasattr(proc_obj.stdout, 'decode'):
+        log_file.write(proc_obj.stdout.decode('utf-8'))
+
+    if hasattr(proc_obj.stderr, 'decode'):
+        log_file.write(proc_obj.stderr.decode('utf-8'))
+
     log_file.close()
 
 
@@ -78,8 +84,8 @@ class DataGenerator:
     def __init__(self, wt, mutlist, flags, calculate='stability', chains=['A'],
         min_mdp="/Users/linkai/CC_PBSA/min.mdp",
         energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
-        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"
-        pbsparams="/Users/linkai/CC_PBSA/parameters.txt"
+        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg",
+        pbeparams="/Users/linkai/CC_PBSA/parameters.txt"
         ):
         """Creates and moves to the main folder upon initialization and copies
         the wt .pdb file into a subdirectory of the working directory.
@@ -94,7 +100,7 @@ class DataGenerator:
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
-        self.pbsparams = pbsparams
+        self.pbeparams = pbeparams
 
 #        Parameters to indicate the state of the structures.
         self.minimized = False
@@ -358,27 +364,31 @@ class DataGenerator:
 
 
     def electrostatics(self):
-        """Uses gropbs for calculating the solvation and Coulomb energy.
+        """Uses gropbe for calculating the solvation and Coulomb energy.
         Requires an additional parameters file for epsilon r which .tpr file
         and so on. The run input file line should be left empty since this
-        method will specify it for every structure.
+        method will specify it for every structure. This method can only be run
+        after there is a \"sp.tpr\" (single point) file, i.e. after the lj()
+        method, since topol.tpr is still the unminimized structure.
         """
 #        assert self.minimized == True, ERRORSTR
         
         for d in self.wdlist:
             os.chdir(d)
+            intpr = "in(tpr,%s)" % (d+'/sp.tpr')
 
-            intpr = "in(tpr,%s)" % d+'/sp.tpr'
-            with open(self.pbsparams, 'a') as pbsparams:
-                lines = pbsparams.readlines()
-                pbsparams.write(intpr)
+            with open(self.pbeparams, 'r') as pbeparams:
+                lines = pbeparams.readlines()
 
-            gropbs = ['gropbs', self.pbsparams]
-            elecstat = subprocess.run(gropbs, stdout=subprocess.PIPE)
+            with open(self.pbeparams, 'w') as pbeparams:
+                pbeparams.writelines([intpr]+lines)
+
+            gropbe = ['gropbe', self.pbeparams]
+            elecstat = subprocess.run(gropbe, input=b'0', stdout=subprocess.PIPE)
             log("elecstat.log", elecstat)
 
-            with open(self.pbsparams, 'w') as pbsparams:
-                pbsparams.write(lines)
+            with open(self.pbeparams, 'w') as pbeparams:
+                pbeparams.writelines(lines)
 
             os.chdir(self.maindir)
 
@@ -507,8 +517,8 @@ class DataGenerator:
             self.mutate()
             self.concoord()
             self.minimize()
-            self.electrostatics()
             self.lj()
+            self.electrostatics()
             self.area()
             self.schlitter()
 
@@ -516,8 +526,8 @@ class DataGenerator:
             self.mutate()
             self.concoord()
             self.minimize()
-            self.electrostatics()
             self.lj()
+            self.electrostatics()
             self.area()
 
 
@@ -655,13 +665,13 @@ if __name__ == '__main__':
 #    y.lj()
 #    y.area()
 #    y.schlitter()
-    x = DataCollector(y)
-    print("values")
-    x.search_lj()
-    x.search_area()
-    x.search_entropy()
-    print(x.ener_df)
-    x.ffed(1, 1, 1, 1, 1)
+#    x = DataCollector(y)
+#    print("values")
+#    x.search_lj()
+#    x.search_area()
+#    x.search_entropy()
+#    print(x.ener_df)
+#    x.ffed(1, 1, 1, 1, 1)
     
 #    for i in x.wdlist:
 #        print(i[len(x.maindir):])
