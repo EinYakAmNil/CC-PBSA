@@ -79,6 +79,7 @@ class DataGenerator:
         min_mdp="/Users/linkai/CC_PBSA/min.mdp",
         energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
         mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"
+        pbsparams="/Users/linkai/CC_PBSA/parameters.txt"
         ):
         """Creates and moves to the main folder upon initialization and copies
         the wt .pdb file into a subdirectory of the working directory.
@@ -93,6 +94,7 @@ class DataGenerator:
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
+        self.pbsparams = pbsparams
 
 #        Parameters to indicate the state of the structures.
         self.minimized = False
@@ -356,8 +358,29 @@ class DataGenerator:
 
 
     def electrostatics(self):
-        pass
+        """Uses gropbs for calculating the solvation and Coulomb energy.
+        Requires an additional parameters file for epsilon r which .tpr file
+        and so on. The run input file line should be left empty since this
+        method will specify it for every structure.
+        """
+#        assert self.minimized == True, ERRORSTR
+        
+        for d in self.wdlist:
+            os.chdir(d)
 
+            intpr = "in(tpr,%s)" % d+'/sp.tpr'
+            with open(self.pbsparams, 'a') as pbsparams:
+                lines = pbsparams.readlines()
+                pbsparams.write(intpr)
+
+            gropbs = ['gropbs', self.pbsparams]
+            elecstat = subprocess.run(gropbs, stdout=subprocess.PIPE)
+            log("elecstat.log", elecstat)
+
+            with open(self.pbsparams, 'w') as pbsparams:
+                pbsparams.write(lines)
+
+            os.chdir(self.maindir)
 
     def lj(self):
         """calculates the single point Lennard Jones Energy (1-4 and
@@ -550,12 +573,13 @@ class DataCollector:
             os.chdir(self.maindir)
 
 
-    def search_es(self):
+    def search_elecstat(self):
         """Find the files in which the solvation energy and the Coulomb
         potential are supposed to be written in and save the parsed values in
         ener_df.
         """
-        pass
+        for d in self.ener_df.index:
+            pass
 
 
     def search_area(self):
