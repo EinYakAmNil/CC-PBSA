@@ -97,6 +97,7 @@ class DataGenerator:
         self.wt = wt #
         self.flags = self.parse_flags(flags)
         self.mut_df = self.parse_mutlist(mutlist) #
+
         self.e_mdp = energy_mdp
         self.min_mdp = min_mdp
         self.mdrun_table = mdrun_table
@@ -363,7 +364,7 @@ class DataGenerator:
         self.minimized = True
 
 
-    def electrostatics(self):
+    def solvation_energy(self):
         """Uses gropbe for calculating the solvation and Coulomb energy.
         Requires an additional parameters file for epsilon r which .tpr file
         and so on. The run input file line should be left empty since this
@@ -384,15 +385,38 @@ class DataGenerator:
                 pbeparams.writelines([intpr]+lines)
 
             gropbe = ['gropbe', self.pbeparams]
-            elecstat = subprocess.run(gropbe, input=b'0', stdout=subprocess.PIPE)
-            log("elecstat.log", elecstat)
+            
+            input_ = ",".join([str(i) for i in range(len(self.chains))])
+            solv = subprocess.run(gropbe, input=bytes(input_, 'utf-8'),
+                stdout=subprocess.PIPE)
+            log("solvation.log", solv)
 
             with open(self.pbeparams, 'w') as pbeparams:
                 pbeparams.writelines(lines)
 
+            if self.mode == 'affinity':
+
+                for cn in range(len(self.chains)):
+                    chaintpr ="chain_%s.tpr" % self.chains[cn]
+
+                    with open(self.pbeparams, 'r') as pbeparams:
+                        lines = pbeparams.readlines()
+
+                    with open(self.pbeparams, 'w') as pbeparams:
+                        pbeparams.writelines(["in(tpr,%s)" % chaintpr] + lines)
+
+                    gropbe = ['gropbe', self.pbeparams]
+                    solv = subprocess.run(gropbe, input=b'0',
+                        stdout=subprocess.PIPE)
+                    log("solvation_%s.log" % self.chains[cn], solv)
+
+                    with open(self.pbeparams, 'w') as pbeparams:
+                        pbeparams.writelines(lines)
+
             os.chdir(self.maindir)
 
-    def lj(self):
+
+    def coulomb_lj(self):
         """calculates the single point Lennard Jones Energy (1-4 and
         shortrange) of all self.structures.
         """
@@ -414,9 +438,12 @@ class DataGenerator:
             for proc in gmxprocs:
                 gmx(proc)
 
-            energy = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
-                input=b'5\n7', stdout=subprocess.PIPE)
-            log("lj.log", energy)
+            coulomb = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
+                input=b'6 8', stdout=subprocess.PIPE)
+            log("coulomb.log", coulomb)
+            lj = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
+                input=b'5 7', stdout=subprocess.PIPE)
+            log("lj.log", lj)
 
             if self.mode == 'affinity':
 
@@ -447,10 +474,14 @@ class DataGenerator:
                     for proc in gmxprocs:
                         gmx(proc)
 
-                    energy = gmx(['energy',
+                    coulomb = gmx(['energy',
                         '-f', 'chain_%s_sp.edr' % self.chains[cn],
-                        '-sum', 'yes'], input=b'5\n7', stdout=subprocess.PIPE)
-                    log("chain_%s_lj.log" % self.chains[cn], energy)
+                        '-sum', 'yes'], input=b'5 6 7 8', stdout=subprocess.PIPE)
+                    log("chain_%s_coulomb.log" % self.chains[cn], coulomb)
+                    lj = gmx(['energy',
+                        '-f', 'chain_%s_sp.edr' % self.chains[cn],
+                        '-sum', 'yes'], input=b'5 6 7 8', stdout=subprocess.PIPE)
+                    log("chain_%s_lj.log" % self.chains[cn], lj)
 
 #                    Revert the changes in the topol.top file.
                     l[-len(self.chains):] = [line[1:]  if line != l[topline] \
@@ -494,6 +525,7 @@ class DataGenerator:
         covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
         anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
         ensembles = unpack([self.__repr__(), list(self.mut_df.index)])
+        ensembles = [i for i in ensembles if i != None]
 
         for en in ensembles:
             os.chdir(en)
@@ -517,8 +549,8 @@ class DataGenerator:
             self.mutate()
             self.concoord()
             self.minimize()
-            self.lj()
-            self.electrostatics()
+            self.coulomb_lj()
+            self.solvation_energy()
             self.area()
             self.schlitter()
 
@@ -526,8 +558,8 @@ class DataGenerator:
             self.mutate()
             self.concoord()
             self.minimize()
-            self.lj()
-            self.electrostatics()
+            self.coulomb_lj()
+            self.solvation_energy()
             self.area()
 
 
@@ -583,13 +615,37 @@ class DataCollector:
             os.chdir(self.maindir)
 
 
-    def search_elecstat(self):
+    def search_coulomb(self):
+        """Find the file in which the Coulomb energies are supposed to be
+        written in and save the parsed values in ener_df.
+        """
+        tail = "tail -q -n 1 ".split()
+        for d in self.ener_df.index:
+            os.chdir(d)
+            files = glob.glob("*/coulomb.log")
+            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
+            parsed = [float(i.split()[1]) for i in \
+                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+            self.ener_df['COUL'][d] = np.array(parsed).mean()
+            os.chdir(self.maindir)
+        
+
+
+    def search_solvation(self):
         """Find the files in which the solvation energy and the Coulomb
         potential are supposed to be written in and save the parsed values in
         ener_df.
         """
+        tail = "tail -q -n 3".split()
         for d in self.ener_df.index:
-            pass
+            os.chdir(d)
+            files = glob.glob("*/solvation.log")
+            solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+            solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
+                if 'kJ/mol' in i]
+            parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+            self.ener_df['SOLV'][d] = np.array(parsed).mean()
+            os.chdir(self.maindir)
 
 
     def search_area(self):
@@ -619,13 +675,13 @@ class DataCollector:
             entropy = subprocess.run(head, stdout=subprocess.PIPE)
             entropy = entropy.stdout.decode('utf-8')
             valstart = entropy.index('is ')+3
-            valend = entropy.index(' J/mol')
-            entropy = float(entropy[valstart:valend])
+            valend = entropy.index(' J/mol K')
+            entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
             self.ener_df['-TS'][d] = np.array(-300 * entropy)
             os.chdir(self.maindir)
 
 
-    def ffed(self, alpha=0, beta=0, gamma=0, tau=0, c=0):
+    def ffed(self, alpha=1, beta=1, gamma=1, tau=1, c=1):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
@@ -649,29 +705,90 @@ class DataCollector:
             ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
                 ddG['LJ'][i] + ddG['SAS'][i] + ddG['-TS'][i]
 
+        ddG.to_csv("ddG.csv")
+
+
+class GXG(DataGenerator, DataCollector):
+    """Subclassed from DataGenerator. Used to create the GXG look-up tables for
+    stability calculations.
+    """
+    def __init__(self, gxg_flags,
+        min_mdp="/Users/linkai/CC_PBSA/min.mdp",
+        energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
+        pbeparams="/Users/linkai/CC_PBSA/parameters.txt",
+        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"):
+        """Only takes the flags and .mdp arguments, since the others should not
+        affect it anyway.
+        """
+        self.aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+#        self.aa1 = list("AC")
+        self.mode = 'stability'
+        self.flags = self.parse_flags(gxg_flags)
+        self.e_mdp = energy_mdp
+        self.min_mdp = min_mdp
+        self.mdrun_table = mdrun_table
+        self.pbeparams = pbeparams
+        self.minimized = False
+        self.mut_df = pd.DataFrame(0, columns=['X'],
+            index=["G%sG" % x for x in self.aa1])
+        self.chains = ['A']
+
+        makedir('GXG')
+        os.chdir('GXG')
+        self.maindir = os.getcwd()
+        self.make_gxg()
+        self.wdlist = [self.maindir+'/G%sG' % x for x in self.aa1]
+
+        self.ener_df = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=["G%sG" % x for x in self.aa1])
+
+    
+    def __repr__(self):
+        return None
+
+
+    def make_gxg(self):
+        """Create the tripeptides using PyMOL. Each peptide is saved in a
+        separate directory similar to mutations in Protein.
+        """
+        for x in self.aa1:
+            gxg = "G%sG" % x
+            makedir(gxg)
+            cmd.fab(gxg, gxg)
+            cmd.save(gxg+'/'+gxg+'.pdb')
+            cmd.reinitialize()
+
+
+    def __call__(self):
+        self.concoord()
+        self.minimize()
+        self.coulomb_lj()
+        self.solvation_energy()
+        self.area()
+        self.schlitter()
+        self.search_lj()
+        self.search_coulomb()
+        self.search_solvation()
+        self.search_area()
+        self.search_entropy()
+
 
 if __name__ == '__main__':
+#    x = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
+#    print(x.mut_df)
 #    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
-#        chains=['A', 'B'])
+#            chains=['A', 'B'])
 #    x.fullrun()
-#
-#    os.chdir('..')
+#    y = DataCollector(x)
+#    y.search_lj()
+#    y.search_coulomb()
+#    y.search_solvation()
+#    y.search_area()
+#    y.search_entropy()
+#    print(y.ener_df)
+#    y.ffed()
+    x = GXG("param.txt")
+    x()
+    print(x.ener_df)
 
-    y = DataGenerator("1stn.pdb", "mut3.txt", "param.txt")
-    y.fullrun()
-#    y.mutate()
-#    y.concoord()
-#    y.minimize()
-#    y.lj()
-#    y.area()
-#    y.schlitter()
-#    x = DataCollector(y)
-#    print("values")
-#    x.search_lj()
-#    x.search_area()
-#    x.search_entropy()
-#    print(x.ener_df)
-#    x.ffed(1, 1, 1, 1, 1)
-    
-#    for i in x.wdlist:
-#        print(i[len(x.maindir):])
