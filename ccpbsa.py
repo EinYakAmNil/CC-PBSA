@@ -1,3 +1,4 @@
+#!/Applications/PyMOL.app/Contents/bin/python3
 """Code for CC/PBSA, a fast tool for estimating folding free energy
 differences.
 """
@@ -569,6 +570,11 @@ class DataCollector:
     stored. Also contains methods to create .csv tables for calculation of
     folding free energy differences between wildtype and mutant protein.
     """
+    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+    aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
+    aa123 = dict(zip(aa1,aa3))
+    aa321 = dict(zip(aa3,aa1))
+
     def __init__(self, data_obj):
         """Pass the DataGenerator object to initialize. This way all the
         directories that contains the data is known without much searching.
@@ -580,6 +586,8 @@ class DataCollector:
         os.chdir(self.maindir)
 
         self.n = len(data_obj)
+        self.mut_df = data_obj.mut_df
+        self.mut_df['Mutation'] = [self.aa321[x] for x in self.mut_df['Mutation']]
 
         if data_obj.mode == 'stability':
             self.ener_df = pd.DataFrame(0.0, 
@@ -677,11 +685,11 @@ class DataCollector:
             valstart = entropy.index('is ')+3
             valend = entropy.index(' J/mol K')
             entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
-            self.ener_df['-TS'][d] = np.array(-300 * entropy)
+            self.ener_df['-TS'][d] = np.array(-298.15 * entropy)
             os.chdir(self.maindir)
 
 
-    def ffed(self, alpha=1, beta=1, gamma=1, tau=1, c=1):
+    def ffed(self, gxgtable, alpha=1, beta=1, gamma=1, tau=1, c=1):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
@@ -690,6 +698,8 @@ class DataCollector:
             columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
             index=self.ener_df.index[1:]
         )
+        gxgtable = pd.read_csv(gxg_table)
+
         
         for i in ddG.index:
             ddG['SOLV'][i] = alpha * (self.ener_df['SOLV'][i] - \
@@ -712,6 +722,8 @@ class GXG(DataGenerator, DataCollector):
     """Subclassed from DataGenerator. Used to create the GXG look-up tables for
     stability calculations.
     """
+    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+
     def __init__(self, gxg_flags,
         min_mdp="/Users/linkai/CC_PBSA/min.mdp",
         energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
@@ -720,8 +732,6 @@ class GXG(DataGenerator, DataCollector):
         """Only takes the flags and .mdp arguments, since the others should not
         affect it anyway.
         """
-        self.aa1 = list("ACDEFGHIKLMNPQRSTVWY")
-#        self.aa1 = list("AC")
         self.mode = 'stability'
         self.flags = self.parse_flags(gxg_flags)
         self.e_mdp = energy_mdp
@@ -775,12 +785,13 @@ class GXG(DataGenerator, DataCollector):
 
 
 if __name__ == '__main__':
-#    x = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
-#    print(x.mut_df)
+    x = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
+    print(x.mut_df)
 #    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
 #            chains=['A', 'B'])
 #    x.fullrun()
-#    y = DataCollector(x)
+    y = DataCollector(x)
+    print(y.mut_df)
 #    y.search_lj()
 #    y.search_coulomb()
 #    y.search_solvation()
@@ -788,7 +799,7 @@ if __name__ == '__main__':
 #    y.search_entropy()
 #    print(y.ener_df)
 #    y.ffed()
+    os.chdir('..')
     x = GXG("param.txt")
-    x()
-    print(x.ener_df)
-
+    x.ener_df.to_csv('gxg.csv')
+#    x()
