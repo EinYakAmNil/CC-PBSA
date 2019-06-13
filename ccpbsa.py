@@ -110,12 +110,12 @@ class DataGenerator:
 
 #        Initialize working directory.
         makedir(self.__repr__())
-        shutil.copy(self.wt, self.__repr__())
+#        shutil.copy(self.wt, self.__repr__())
         os.chdir(self.__repr__())
         self.maindir = os.getcwd()
         makedir(self.__repr__())
         self.wt = self + ".pdb"
-        shutil.move(self.wt, self.__repr__())
+#        shutil.move(self.wt, self.__repr__())
         self.wdlist = [self.maindir+'/'+self.__repr__()] #
 
 
@@ -244,7 +244,6 @@ class DataGenerator:
             cmd.load(self+'/'+self.wt)
             cmd.wizard('mutagenesis')
             mut_key = self.mut_df.axes[0][m]
-#            name = "%s_%s" % (self, mut_key)
             cmd.get_wizard().do_select('///%s/%s' %
                 (self.mut_df["Chain"][m], str(self.mut_df["Residue"][m])))
             cmd.get_wizard().set_mode(self.mut_df["Mutation"][m])
@@ -263,8 +262,7 @@ class DataGenerator:
         sourced.
         """
         for d in self.wdlist:
-            os.chdir(d)
-            fpf = d.split('/')[-1] # fpf stands for file prefix
+            os.chdir(d) fpf = d.split('/')[-1] # fpf stands for file prefix
             dist_input = [
                 'dist',
                 '-p', '%s' % fpf+'.pdb',
@@ -588,8 +586,9 @@ class DataCollector:
         self.n = len(data_obj)
         self.mut_df = data_obj.mut_df
         self.mut_df['Mutation'] = [self.aa321[x] for x in self.mut_df['Mutation']]
+        self.mode = data_obj.mode
 
-        if data_obj.mode == 'stability':
+        if self.mode == 'stability':
             self.ener_df = pd.DataFrame(0.0, 
                 columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
                 index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
@@ -689,6 +688,26 @@ class DataCollector:
             os.chdir(self.maindir)
 
 
+    def search_data(self):
+        """Uses all the previous searching methods to create a .csv file of the
+        DataFrame object.
+        """
+        if self.mode == 'stability':
+            self.search_lj()
+            self.search_coulomb()
+            self.search_solation()
+            self.search_area()
+            self.search_entropy()
+
+        if self.mode == 'affinity':
+            self.search_lj()
+            self.search_coulomb()
+            self.search_solvation()
+            self.search_area()
+
+        self.ener_df.to_csv("G.csv")
+
+
     def ffed(self, gxgtable, alpha=1, beta=1, gamma=1, tau=1, c=1):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
@@ -698,20 +717,31 @@ class DataCollector:
             columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
             index=self.ener_df.index[1:]
         )
-        gxgtable = pd.read_csv(gxg_table)
-
+        gxgtable = pd.read_csv(gxg_table, index_col=0)
         
         for i in ddG.index:
-            ddG['SOLV'][i] = alpha * (self.ener_df['SOLV'][i] - \
-                self.ener_df['SOLV'][0])
-            ddG['COUL'][i] = alpha * (self.ener_df['COUL'][i] - \
-                self.ener_df['COUL'][0])
-            ddG['LJ'][i] = beta * (self.ener_df['LJ'][i] - \
-                self.ener_df['LJ'][0])
-            ddG['SAS'][i] = gamma * (self.ener_df['SAS'][i] - \
-                self.ener_df['SAS'][0])
-            ddG['-TS'][i] = tau * (self.ener_df['-TS'][i] - \
-                self.ener_df['-TS'][0])
+            aa_wt = i.split('_')[-1][-1]
+            aa_mut = i.split('_')[-1][0]
+            ddG['SOLV'][i] = alpha * \
+                (self.ener_df['SOLV'][i] - self.ener_df['SOLV'][0] - \
+                gxgtable['SOLV'][aa_mut] + gxgtable['SOLV'][wt])
+
+            ddG['COUL'][i] = alpha * \
+                (self.ener_df['COUL'][i] - self.ener_df['COUL'][0] - \
+                gxgtable['COUL'][aa_mut] + gxgtable['COUL'][wt])
+
+            ddG['LJ'][i] = beta * \
+                (self.ener_df['LJ'][i] - self.ener_df['LJ'][0] - \
+                gxgtable['LJ'][aa_mut] + gxgtable['LJ'][wt])
+
+            ddG['SAS'][i] = gamma * \
+                (self.ener_df['SAS'][i] - self.ener_df['SAS'][0] - \
+                gxgtable['SAS'][aa_mut] + gxgtable['SAS'][wt])
+
+            ddG['-TS'][i] = tau * \
+                (self.ener_df['-TS'][i] - self.ener_df['-TS'][0] - \
+                gxgtable['-TS'][aa_mut] + gxgtable['-TS'][wt])
+
             ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
                 ddG['LJ'][i] + ddG['SAS'][i] + ddG['-TS'][i]
 
@@ -785,21 +815,13 @@ class GXG(DataGenerator, DataCollector):
 
 
 if __name__ == '__main__':
-    x = DataGenerator("1ayi.pdb", "mut2.txt", "param.txt")
-    print(x.mut_df)
-#    x = DataGenerator("1bxi.pdb", "mut.txt", "param.txt", calculate='affinity',
-#            chains=['A', 'B'])
+    x = DataGenerator("1hz6.pdb", "mutations_1hz6.txt", "param.txt")
+    x.mutate()
+    x.concoord()
 #    x.fullrun()
     y = DataCollector(x)
-    print(y.mut_df)
-#    y.search_lj()
-#    y.search_coulomb()
-#    y.search_solvation()
-#    y.search_area()
-#    y.search_entropy()
-#    print(y.ener_df)
-#    y.ffed()
-    os.chdir('..')
-    x = GXG("param.txt")
-    x.ener_df.to_csv('gxg.csv')
+    y.search_data()
+    
+#    x = GXG("param.txt")
 #    x()
+#    x.ener_df.to_csv('gxg.csv')
