@@ -110,12 +110,12 @@ class DataGenerator:
 
 #        Initialize working directory.
         makedir(self.__repr__())
-#        shutil.copy(self.wt, self.__repr__())
+        shutil.copy(self.wt, self.__repr__())
         os.chdir(self.__repr__())
         self.maindir = os.getcwd()
         makedir(self.__repr__())
         self.wt = self + ".pdb"
-#        shutil.move(self.wt, self.__repr__())
+        shutil.move(self.wt, self.__repr__())
         self.wdlist = [self.maindir+'/'+self.__repr__()] #
 
 
@@ -262,7 +262,8 @@ class DataGenerator:
         sourced.
         """
         for d in self.wdlist:
-            os.chdir(d) fpf = d.split('/')[-1] # fpf stands for file prefix
+            os.chdir(d)
+            fpf = d.split('/')[-1] # fpf stands for file prefix
             dist_input = [
                 'dist',
                 '-p', '%s' % fpf+'.pdb',
@@ -695,7 +696,7 @@ class DataCollector:
         if self.mode == 'stability':
             self.search_lj()
             self.search_coulomb()
-            self.search_solation()
+            self.search_solvation()
             self.search_area()
             self.search_entropy()
 
