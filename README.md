@@ -32,7 +32,7 @@ No other software component should cause any trouble.
 #### Python
 
 I found it easiest to just get PyMOL and use its the own python interpreter.
-Additional modules can then be install by just using `pip`.
+Additional modules can then be install by just using `/path/to/PyMOL/bin/pip`.
 
 #### CONCOORD
 
