@@ -19,8 +19,7 @@ def gxg(
 
 
 def main():
-    pkgpath = __path__[0].split('/')
-    pkgpath = '/'.join(pkgpath[:-1])
+    pkgpath = __path__[0]
     cliparser = argparse.ArgumentParser(prog='ccpbsa')
 
     cliparser.add_argument(
