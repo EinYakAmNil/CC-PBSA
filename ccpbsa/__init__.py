@@ -96,14 +96,14 @@ def main():
     cliargs = cliparser.parse_args()
 
 #    Very simple parser for reading in alpha, beta...
-    if cliparser.mode == 'stability':
+    if cliargs.mode == 'stability':
         with open(cliargs.stability_parameters, 'r') as fit:
             parameters = fit.readlines()
             parameters = [l[:-1] for l in parameters] # Remove newlines
             parameters = [l.split("=") for l in parameters]
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
-    if cliparser.mode == 'affinity':
+    if cliargs.mode == 'affinity':
         with open(cliargs.affinity_parameters, 'r') as fit:
             parameters = fit.readlines()
             parameters = [l[:-1] for l in parameters] # Remove newlines

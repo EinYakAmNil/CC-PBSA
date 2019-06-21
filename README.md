@@ -1,4 +1,5 @@
 # CC-PBSA
+A fast tool to compute mutational free energy.
 
 ## Required software
 

@@ -6,7 +6,7 @@
 DIST FLAGS
 
 DISCO FLAGS
--n=2
+-n=300
 
 PDB2GMX FLAGS
 -ff=oplsaa
