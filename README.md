@@ -9,7 +9,7 @@ A fast tool to compute mutational free energy.
   + numpy
 + CONCOORD
 + GROMACS 2019.2
-+ GroPBS (zip packages for Mac/Linux in the repository)
++ GroPBS (instructions in progress)
 
 ## Installation
 
