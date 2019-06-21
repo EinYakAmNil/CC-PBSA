@@ -1,0 +1,25 @@
+;Every line above "PDB2GMX PARAMETERS" can be used
+;to comment.
+
+;Energy choices should be in one line
+;seperated by space or maximum one linebreak
+DIST FLAGS
+
+DISCO FLAGS
+-n=2
+
+PDB2GMX FLAGS
+-ff=oplsaa
+-water=none
+
+
+EDITCONF FLAGS ;This is a comment aswell
+-bt=cubic
+-d=2
+-c ; So is this
+
+GROMPP FLAGS
+-maxwarn=1
+
+MDRUN FLAGS
+-nt=1

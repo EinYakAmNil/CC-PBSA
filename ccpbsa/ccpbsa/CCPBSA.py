@@ -4,7 +4,6 @@ differences.
 """
 import glob
 import os
-import re
 import shutil
 import subprocess
 import numpy as np
@@ -82,12 +81,17 @@ class DataGenerator:
     the flags for each programm (CONCOORD/GROMACS) and optionally user specific
     .mdp files and tables for GROMACS.
     """
-    def __init__(self, wt, mutlist, flags, calculate='stability', chains=['A'],
-        min_mdp="/Users/linkai/CC_PBSA/min.mdp",
-        energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
-        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg",
-        pbeparams="/Users/linkai/CC_PBSA/parameters.txt"
-        ):
+    def __init__(self,
+        wt,
+        mutlist,
+        flags,
+        calculate,
+        chains,
+        min_mdp,
+        energy_mdp,
+        mdrun_table,
+        pbeparams
+    ):
         """Creates and moves to the main folder upon initialization and copies
         the wt .pdb file into a subdirectory of the working directory.
         self.maindir will be the directory to which each function call returns
@@ -110,12 +114,12 @@ class DataGenerator:
 
 #        Initialize working directory.
         makedir(self.__repr__())
-#        shutil.copy(self.wt, self.__repr__())
+        shutil.copy(self.wt, self.__repr__())
         os.chdir(self.__repr__())
         self.maindir = os.getcwd()
         makedir(self.__repr__())
         self.wt = self + ".pdb"
-#        shutil.move(self.wt, self.__repr__())
+        shutil.move(self.wt, self.__repr__())
         self.wdlist = [self.maindir+'/'+self.__repr__()] #
 
 
@@ -262,7 +266,8 @@ class DataGenerator:
         sourced.
         """
         for d in self.wdlist:
-            os.chdir(d) fpf = d.split('/')[-1] # fpf stands for file prefix
+            os.chdir(d)
+            fpf = d.split('/')[-1] # fpf stands for file prefix
             dist_input = [
                 'dist',
                 '-p', '%s' % fpf+'.pdb',
@@ -380,18 +385,15 @@ class DataGenerator:
             with open(self.pbeparams, 'r') as pbeparams:
                 lines = pbeparams.readlines()
 
-            with open(self.pbeparams, 'w') as pbeparams:
+            with open("gropbe.txt", 'w') as pbeparams:
                 pbeparams.writelines([intpr]+lines)
 
-            gropbe = ['gropbe', self.pbeparams]
+            gropbe = ['gropbe', "gropbe.txt"]
             
             input_ = ",".join([str(i) for i in range(len(self.chains))])
             solv = subprocess.run(gropbe, input=bytes(input_, 'utf-8'),
                 stdout=subprocess.PIPE)
             log("solvation.log", solv)
-
-            with open(self.pbeparams, 'w') as pbeparams:
-                pbeparams.writelines(lines)
 
             if self.mode == 'affinity':
 
@@ -401,16 +403,13 @@ class DataGenerator:
                     with open(self.pbeparams, 'r') as pbeparams:
                         lines = pbeparams.readlines()
 
-                    with open(self.pbeparams, 'w') as pbeparams:
+                    with open("gropbe.txt", 'w') as pbeparams:
                         pbeparams.writelines(["in(tpr,%s)" % chaintpr] + lines)
 
-                    gropbe = ['gropbe', self.pbeparams]
+                    gropbe = ['gropbe', "gropbe.txt"]
                     solv = subprocess.run(gropbe, input=b'0',
                         stdout=subprocess.PIPE)
                     log("solvation_%s.log" % self.chains[cn], solv)
-
-                    with open(self.pbeparams, 'w') as pbeparams:
-                        pbeparams.writelines(lines)
 
             os.chdir(self.maindir)
 
@@ -577,8 +576,8 @@ class DataCollector:
         """Pass the DataGenerator object to initialize. This way all the
         directories that contains the data is known without much searching.
         """
-        pattern = re.compile("<class '__.+__.DataGenerator'>")
-        assert pattern.match(str(type(data_obj))), "Not a DataGenerator."
+#        pattern = re.compile("<class '__.+__.DataGenerator'>")
+#        assert pattern.match(str(type(data_obj))), "Not a DataGenerator."
 
         self.maindir = data_obj.maindir
         os.chdir(self.maindir)
@@ -618,6 +617,15 @@ class DataCollector:
             lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
             parsed = [float(i.split()[1]) for i in \
                 lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+
+            if self.mode == 'affinity':
+                files = glob.glob("*/chain_*_lj.log")
+                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
+                    if 'kJ/mol' in i]
+                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+                self.ener_df -= np.array(parsed).sum()
+
             self.ener_df['LJ'][d] = np.array(parsed).mean()
             os.chdir(self.maindir)
 
@@ -634,6 +642,16 @@ class DataCollector:
             parsed = [float(i.split()[1]) for i in \
                 lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
             self.ener_df['COUL'][d] = np.array(parsed).mean()
+            os.chdir(self.maindir)
+
+            if self.mode == 'affinity':
+                files = glob.glob("*/chain_*_coulomb.log")
+                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
+                    if 'kJ/mol' in i]
+                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+                self.ener_df -= np.array(parsed).sum()
+
             os.chdir(self.maindir)
         
 
@@ -652,6 +670,15 @@ class DataCollector:
                 if 'kJ/mol' in i]
             parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
             self.ener_df['SOLV'][d] = np.array(parsed).mean()
+
+            if self.mode == 'affinity':
+                files = glob.glob("*/solvation_*.log")
+                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
+                    if 'kJ/mol' in i]
+                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+                self.ener_df -= np.array(parsed).sum()
+
             os.chdir(self.maindir)
 
 
@@ -661,13 +688,26 @@ class DataCollector:
         ener_df.
         """
         tail = "tail -q -n 1 ".split()
-        for d in self.ener_df.index:
-            os.chdir(d)
+
+        if self.mode == 'stability':
+
+            for d in self.ener_df.index:
+                os.chdir(d)
+                files = glob.glob("*/area.xvg")
+                areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
+                parsed = [float(i.split()[1]) for i in \
+                    areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
+                self.ener_df['SAS'][d] = np.array(parsed).mean()
+                os.chdir(self.maindir)
+
+        if self.mode == 'affinity':
+            os.chdir(self.ener_df.index[0])
             files = glob.glob("*/area.xvg")
             areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [float(i.split()[1]) for i in \
+            parsed = [i.split()[1:] for i in \
                 areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-            self.ener_df['SAS'][d] = np.array(parsed).mean()
+            parsed = [(float(i[1])+float(i[2])-float(i[0])) for i in parsed]
+            self.ener_df['PPIS'] = np.array(parsed).mean()
             os.chdir(self.maindir)
 
 
@@ -695,20 +735,20 @@ class DataCollector:
         if self.mode == 'stability':
             self.search_lj()
             self.search_coulomb()
-            self.search_solation()
+            self.search_solvation()
             self.search_area()
             self.search_entropy()
+            self.ener_df.to_csv("G.csv")
 
         if self.mode == 'affinity':
             self.search_lj()
             self.search_coulomb()
             self.search_solvation()
             self.search_area()
+            self.ener_df.to_csv("dG.csv")
 
-        self.ener_df.to_csv("G.csv")
 
-
-    def ffed(self, gxgtable, alpha=1, beta=1, gamma=1, tau=1, c=1):
+    def ddstability(self, gxgtable, alpha, beta, gamma, tau):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
@@ -748,17 +788,44 @@ class DataCollector:
         ddG.to_csv("ddG.csv")
 
 
+    def ddaffinity(self, alpha, beta, gamma, c, pka):
+        """Calculate the change in affinity
+        """
+        ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=self.ener_df.index[1:]
+        )
+        
+        for i in ddG.index:
+            ddG['SOLV'][i] = alpha * \
+                (self.ener_df['SOLV'][i] - self.ener_df['SOLV'][0])
+
+            ddG['COUL'][i] = alpha * \
+                (self.ener_df['COUL'][i] - self.ener_df['COUL'][0])
+
+            ddG['LJ'][i] = beta * \
+                (self.ener_df['LJ'][i] - self.ener_df['LJ'][0])
+
+            ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
+                ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c + ddG['PKA'][i]
+
+        ddG.to_csv("ddG.csv")
+
+
 class GXG(DataGenerator, DataCollector):
     """Subclassed from DataGenerator. Used to create the GXG look-up tables for
     stability calculations.
     """
     aa1 = list("ACDEFGHIKLMNPQRSTVWY")
 
-    def __init__(self, gxg_flags,
-        min_mdp="/Users/linkai/CC_PBSA/min.mdp",
-        energy_mdp="/Users/linkai/CC_PBSA/energy.mdp",
-        pbeparams="/Users/linkai/CC_PBSA/parameters.txt",
-        mdrun_table="/Users/linkai/CC_PBSA/table4r-6-12.xvg"):
+    def __init__(
+        self,
+        gxg_flags,
+        min_mdp,
+        energy_mdp,
+        pbeparams,
+        mdrun_table
+    ):
         """Only takes the flags and .mdp arguments, since the others should not
         affect it anyway.
         """
@@ -814,14 +881,14 @@ class GXG(DataGenerator, DataCollector):
         self.search_entropy()
 
 
-if __name__ == '__main__':
-    x = DataGenerator("1hz6.pdb", "mutations_1hz6.txt", "param.txt")
-    x.mutate()
-    x.concoord()
+#if __name__ == '__main__':
+#    x = DataGenerator("1hz6.pdb", "mutations_1hz6.txt", "param.txt")
+#    x.mutate()
+#    x.concoord()
 #    x.fullrun()
-    y = DataCollector(x)
-    y.search_data()
-    
+#    y = DataCollector(x)
+#    y.search_data()
+#    
 #    x = GXG("param.txt")
 #    x()
 #    x.ener_df.to_csv('gxg.csv')
