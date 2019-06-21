@@ -44,4 +44,6 @@ To find out where it looks for them, run:
 `otool -L /path/to/dist.exe`
 
 If the specified path does not exist, but you have the library somewhere else,
-use `install_name_tool -change /old/path /new/path /path/to/dist.exe`
+use:
+
+`install_name_tool -change /old/path /new/path /path/to/dist.exe`
