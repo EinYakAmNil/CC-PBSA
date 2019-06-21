@@ -19,7 +19,8 @@ def gxg(
 
 
 def main():
-    pkgpath = __path__[0]
+    pkgpath = __path__[0].split('/')
+    pkgpath = '/'.join(pkgpath[:-1])
     cliparser = argparse.ArgumentParser(prog='ccpbsa')
 
     cliparser.add_argument(
@@ -35,7 +36,7 @@ def main():
         help="the flags, which should be passed to CONCOORD and GROMACS. At \
         least the number of structures in CONCOORD and the forcefield and water \
         model should be specified in there",
-        default=pkgpath+'/flags.txt'
+        default=pkgpath+'/parameters/flags.txt'
     )
     cliparser.add_argument(
         "--mode",
