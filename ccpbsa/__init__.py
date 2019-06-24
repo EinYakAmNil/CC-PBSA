@@ -11,7 +11,7 @@ def gxg(
     mdrun_table,
     pbeparams
 ):
-    gxg = GXG(flags)
+    gxg = GXG(flags, min_mdp, energy_mdp, mdrun_table, pbeparams)
     gxg()
     gxg.ener_df.to_csv('gxg.csv')
     

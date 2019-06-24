@@ -823,8 +823,8 @@ class GXG(DataGenerator, DataCollector):
         gxg_flags,
         min_mdp,
         energy_mdp,
-        pbeparams,
-        mdrun_table
+        mdrun_table,
+        pbeparams
     ):
         """Only takes the flags and .mdp arguments, since the others should not
         affect it anyway.
@@ -879,16 +879,3 @@ class GXG(DataGenerator, DataCollector):
         self.search_solvation()
         self.search_area()
         self.search_entropy()
-
-
-#if __name__ == '__main__':
-#    x = DataGenerator("1hz6.pdb", "mutations_1hz6.txt", "param.txt")
-#    x.mutate()
-#    x.concoord()
-#    x.fullrun()
-#    y = DataCollector(x)
-#    y.search_data()
-#    
-#    x = GXG("param.txt")
-#    x()
-#    x.ener_df.to_csv('gxg.csv')
