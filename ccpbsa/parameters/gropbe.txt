@@ -1,7 +1,4 @@
-;in(tpr,/home/linkai/Downloads/1.tpr)
-;Do not specify the file location if you are using gropbe in combination with ccpbsa
-;The files will be selected dynamically.
-epsIn=1
+epsIn=2
 epsOut=78
 filling=60
 spacing=0.5
