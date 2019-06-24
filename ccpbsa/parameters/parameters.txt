@@ -1,7 +1,0 @@
-epsIn=2
-epsOut=78
-filling=78
-spacing=1
-rmsc=0.01
-maxc=0.01
-nomem
