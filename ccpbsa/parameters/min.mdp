@@ -1,6 +1,3 @@
-;Important!
-;If Cut-offs are set to 0 (=no Cut-off),
-;then User defined tables must be 30 nm long EXACTLY.
 integrator                     = l-bfgs
 tinit                          = 0
 dt                             = 0.002
