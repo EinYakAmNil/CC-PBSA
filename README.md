@@ -51,3 +51,7 @@ If the specified path does not exist, but you have the library somewhere else,
 use:
 
 `install_name_tool -change /old/path /new/path /path/to/dist.exe`
+
+If all the packages are installed. Run:
+
+`python3 setup.py install --user`
