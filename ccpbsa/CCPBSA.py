@@ -258,6 +258,20 @@ class DataGenerator:
             shutil.move(mut_key + ".pdb", mut_key)
             self.wdlist.append(self.maindir+'/'+mut_key)
 
+
+    def gmx2pdb(self, gro='confout.gro'):
+        """Use gmx trjconv to turn by default a confout.gro file back into a
+        .pdb file. Used as a step before CONCOORD, to avoid bad starting
+        structures.
+        """
+        for d in self.wdlist:
+            os.chdir(d)
+            fpf = d.split('/')[-1]
+            trjconv = ['trjconv', '-s', gro, '-o', fpf]
+            gmx(trjconv, input=b'0')
+
+            os.chdir(self.maindir)
+
     
     def concoord(self):
         """Performs the CONCOORD procedure to generate protein structure
@@ -545,6 +559,8 @@ class DataGenerator:
         """
         if self.mode == 'stability':
             self.mutate()
+            self.minimize()
+            self.gmx2pdb()
             self.concoord()
             self.minimize()
             self.coulomb_lj()
@@ -554,6 +570,8 @@ class DataGenerator:
 
         elif self.mode == 'affinity':
             self.mutate()
+            self.minimize()
+            self.gmx2pdb()
             self.concoord()
             self.minimize()
             self.coulomb_lj()
@@ -576,9 +594,6 @@ class DataCollector:
         """Pass the DataGenerator object to initialize. This way all the
         directories that contains the data is known without much searching.
         """
-#        pattern = re.compile("<class '__.+__.DataGenerator'>")
-#        assert pattern.match(str(type(data_obj))), "Not a DataGenerator."
-
         self.maindir = data_obj.maindir
         os.chdir(self.maindir)
 
@@ -588,13 +603,21 @@ class DataCollector:
         self.mode = data_obj.mode
 
         if self.mode == 'stability':
-            self.ener_df = pd.DataFrame(0.0, 
+            self.G = pd.DataFrame(0.0, 
                 columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
                 index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
             )
+            self.dG = pd.DataFrame(0.0, 
+                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+                index=self.G.index[1:]
+            )
+            self.ddG = pd.DataFrame(0.0,
+                columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+                index=self.G.index[1:]
+            )
 
         else:
-            self.ener_df = pd.DataFrame(0.0, 
+            self.G = pd.DataFrame(0.0, 
                 columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
                 index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
             )
@@ -608,10 +631,10 @@ class DataCollector:
 
     def search_lj(self):
         """Find the files in which the Lennard-Jones energies are supposed to
-        be written in and save the parsed values in ener_df.
+        be written in and save the parsed values in self.G.
         """
         tail = "tail -q -n 1 ".split()
-        for d in self.ener_df.index:
+        for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/lj.log")
             lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
@@ -624,33 +647,52 @@ class DataCollector:
                 solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
                     if 'kJ/mol' in i]
                 parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.ener_df -= np.array(parsed).sum()
+                self.G -= np.array(parsed).sum()
 
-            self.ener_df['LJ'][d] = np.array(parsed).mean()
+            self.G['LJ'][d] = np.array(parsed).mean()
             os.chdir(self.maindir)
 
 
     def search_coulomb(self):
         """Find the file in which the Coulomb energies are supposed to be
-        written in and save the parsed values in ener_df.
+        written in and save the parsed values in G.
         """
-        tail = "tail -q -n 1 ".split()
-        for d in self.ener_df.index:
+#        tail = "tail -q -n 1 ".split()
+#        for d in self.G.index:
+#            os.chdir(d)
+#            files = glob.glob("*/coulomb.log")
+#            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
+#            parsed = [float(i.split()[1]) for i in \
+#                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+#            self.G['COUL'][d] = np.array(parsed).mean()
+#            os.chdir(self.maindir)
+#
+#            if self.mode == 'affinity':
+#                files = glob.glob("*/chain_*_coulomb.log")
+#                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+#                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
+#                    if 'kJ/mol' in i]
+#                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+#                self.G -= np.array(parsed).sum()
+#
+#            os.chdir(self.maindir)
+        tail = "tail -q -n 5".split()
+        for d in self.G.index:
             os.chdir(d)
-            files = glob.glob("*/coulomb.log")
-            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [float(i.split()[1]) for i in \
-                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
-            self.ener_df['COUL'][d] = np.array(parsed).mean()
-            os.chdir(self.maindir)
+            files = glob.glob("*/solvation.log")
+            coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
+            coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
+                if 'Coulombic energy' in i]
+            parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
+            self.G['COUL'][d] = np.array(parsed).mean()
 
             if self.mode == 'affinity':
-                files = glob.glob("*/chain_*_coulomb.log")
-                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'kJ/mol' in i]
-                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.ener_df -= np.array(parsed).sum()
+                files = glob.glob("*/solvation_*.log")
+                coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
+                coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
+                    if 'Coulombic energy' in i]
+                parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
+                self.G -= np.array(parsed).sum()
 
             os.chdir(self.maindir)
         
@@ -659,25 +701,25 @@ class DataCollector:
     def search_solvation(self):
         """Find the files in which the solvation energy and the Coulomb
         potential are supposed to be written in and save the parsed values in
-        ener_df.
+        self.G.
         """
         tail = "tail -q -n 3".split()
-        for d in self.ener_df.index:
+        for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
             solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
             solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                if 'kJ/mol' in i]
+                if 'Solvation Energy' in i]
             parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-            self.ener_df['SOLV'][d] = np.array(parsed).mean()
+            self.G['SOLV'][d] = np.array(parsed).mean()
 
             if self.mode == 'affinity':
                 files = glob.glob("*/solvation_*.log")
                 solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
                 solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'kJ/mol' in i]
+                    if 'Solvation Energy' in i]
                 parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.ener_df -= np.array(parsed).sum()
+                self.G -= np.array(parsed).sum()
 
             os.chdir(self.maindir)
 
@@ -685,46 +727,46 @@ class DataCollector:
     def search_area(self):
         """Find the files in which the (interaction-)area (normally area.xvg)
         potential are supposed to be written in and save the parsed values in
-        ener_df.
+        G.
         """
         tail = "tail -q -n 1 ".split()
 
         if self.mode == 'stability':
 
-            for d in self.ener_df.index:
+            for d in self.G.index:
                 os.chdir(d)
                 files = glob.glob("*/area.xvg")
                 areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
                 parsed = [float(i.split()[1]) for i in \
                     areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-                self.ener_df['SAS'][d] = np.array(parsed).mean()
+                self.G['SAS'][d] = np.array(parsed).mean()
                 os.chdir(self.maindir)
 
         if self.mode == 'affinity':
-            os.chdir(self.ener_df.index[0])
+            os.chdir(self.G.index[0])
             files = glob.glob("*/area.xvg")
             areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
             parsed = [i.split()[1:] for i in \
                 areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
             parsed = [(float(i[1])+float(i[2])-float(i[0])) for i in parsed]
-            self.ener_df['PPIS'] = np.array(parsed).mean()
+            self.G['PPIS'] = np.array(parsed).mean()
             os.chdir(self.maindir)
 
 
     def search_entropy(self):
         """Find the files in which the entropy according the Schlitter's
         formula are supposed to be written in and save the parsed values in
-        ener_df.
+        self.G.
         """
         head = "head -n 1 entropy.log".split()
-        for d in self.ener_df.index:
+        for d in self.G.index:
             os.chdir(d)
             entropy = subprocess.run(head, stdout=subprocess.PIPE)
             entropy = entropy.stdout.decode('utf-8')
             valstart = entropy.index('is ')+3
             valend = entropy.index(' J/mol K')
             entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
-            self.ener_df['-TS'][d] = np.array(-298.15 * entropy)
+            self.G['-TS'][d] = np.array(-298.15 * entropy)
             os.chdir(self.maindir)
 
 
@@ -738,78 +780,98 @@ class DataCollector:
             self.search_solvation()
             self.search_area()
             self.search_entropy()
-            self.ener_df.to_csv("G.csv")
+            self.G.to_csv("G.csv")
 
         if self.mode == 'affinity':
             self.search_lj()
             self.search_coulomb()
             self.search_solvation()
             self.search_area()
-            self.ener_df.to_csv("dG.csv")
+            self.G.to_csv("dG.csv")
 
 
-    def ddstability(self, gxgtable, alpha, beta, gamma, tau):
+    def dstability(self, gxg_table):
+        """Calculate the free energy difference between folded and unfolded
+        state based on the energy table passed. ddstability operates
+        independent of this function. This is just used for additional info.
+        """
+        gxgtable = pd.read_csv(gxg_table, index_col=0)
+        
+        for i in self.ddG.index:
+            aa_wt = "G%sG" % i.split('_')[-1][-1]
+            aa_mut = "G%sG" % i.split('_')[-1][0]
+            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
+
+            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
+
+            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
+
+            self.dG['SAS'][i] = self.G['SAS'][i] - self.G['SAS'][0]
+
+            self.dG['-TS'][i] = self.G['-TS'][i] - self.G['-TS'][0]
+
+        print(self.dG)
+        self.dG.to_csv("dG.csv")
+
+
+    def ddstability(self, gxg_table, alpha, beta, gamma, tau):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
         """
-        ddG = pd.DataFrame(0.0,
-            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=self.ener_df.index[1:]
-        )
         gxgtable = pd.read_csv(gxg_table, index_col=0)
         
-        for i in ddG.index:
-            aa_wt = i.split('_')[-1][-1]
-            aa_mut = i.split('_')[-1][0]
-            ddG['SOLV'][i] = alpha * \
-                (self.ener_df['SOLV'][i] - self.ener_df['SOLV'][0] - \
-                gxgtable['SOLV'][aa_mut] + gxgtable['SOLV'][wt])
+        for i in self.ddG.index:
+            aa_wt = "G%sG" % i.split('_')[-1][-1]
+            aa_mut = "G%sG" % i.split('_')[-1][0]
+            self.ddG['SOLV'][i] = alpha * \
+                 (self.G['SOLV'][i] - self.G['SOLV'][0] - \
+                 gxgtable['SOLV'][aa_mut] + gxgtable['SOLV'][aa_wt])
 
-            ddG['COUL'][i] = alpha * \
-                (self.ener_df['COUL'][i] - self.ener_df['COUL'][0] - \
-                gxgtable['COUL'][aa_mut] + gxgtable['COUL'][wt])
+            self.ddG['COUL'][i] = alpha * \
+                 (self.G['COUL'][i] - self.G['COUL'][0] - \
+                 gxgtable['COUL'][aa_mut] + gxgtable['COUL'][aa_wt])
 
-            ddG['LJ'][i] = beta * \
-                (self.ener_df['LJ'][i] - self.ener_df['LJ'][0] - \
-                gxgtable['LJ'][aa_mut] + gxgtable['LJ'][wt])
+            self.ddG['LJ'][i] = beta * \
+                 (self.G['LJ'][i] - self.G['LJ'][0] - \
+                 gxgtable['LJ'][aa_mut] + gxgtable['LJ'][aa_wt])
 
-            ddG['SAS'][i] = gamma * \
-                (self.ener_df['SAS'][i] - self.ener_df['SAS'][0] - \
-                gxgtable['SAS'][aa_mut] + gxgtable['SAS'][wt])
+            self.ddG['SAS'][i] = gamma * \
+                 (self.G['SAS'][i] - self.G['SAS'][0] - \
+                 gxgtable['SAS'][aa_mut] + gxgtable['SAS'][aa_wt])
 
-            ddG['-TS'][i] = tau * \
-                (self.ener_df['-TS'][i] - self.ener_df['-TS'][0] - \
-                gxgtable['-TS'][aa_mut] + gxgtable['-TS'][wt])
+            self.ddG['-TS'][i] = tau * \
+                 (self.G['-TS'][i] - self.G['-TS'][0] - \
+                 gxgtable['-TS'][aa_mut] + gxgtable['-TS'][aa_wt])
 
-            ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
-                ddG['LJ'][i] + ddG['SAS'][i] + ddG['-TS'][i]
+            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
+                self.ddG['LJ'][i] +self.ddG['SAS'][i] +self.ddG['-TS'][i]
 
-        ddG.to_csv("ddG.csv")
+        self.ddG.to_csv("ddG.csv")
 
 
     def ddaffinity(self, alpha, beta, gamma, c, pka):
         """Calculate the change in affinity
         """
-        ddG = pd.DataFrame(0.0,
+        self.ddG = pd.DataFrame(0.0,
             columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=self.ener_df.index[1:]
+            index=self.G.index[1:]
         )
         
-        for i in ddG.index:
-            ddG['SOLV'][i] = alpha * \
-                (self.ener_df['SOLV'][i] - self.ener_df['SOLV'][0])
+        for i in self.ddG.index:
+            self.ddG['SOLV'][i] = alpha * \
+                 (self.G['SOLV'][i] - self.G['SOLV'][0])
 
-            ddG['COUL'][i] = alpha * \
-                (self.ener_df['COUL'][i] - self.ener_df['COUL'][0])
+            self.ddG['COUL'][i] = alpha * \
+                 (self.G['COUL'][i] - self.G['COUL'][0])
 
-            ddG['LJ'][i] = beta * \
-                (self.ener_df['LJ'][i] - self.ener_df['LJ'][0])
+            self.ddG['LJ'][i] = beta * \
+                 (self.G['LJ'][i] - self.G['LJ'][0])
 
-            ddG['CALC'][i] = ddG['SOLV'][i] + ddG['COUL'][i] + \
-                ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c + ddG['PKA'][i]
+            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
+                self.ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c +self.ddG['PKA'][i]
 
-        ddG.to_csv("ddG.csv")
+        self.ddG.to_csv("ddG.csv")
 
 
 class GXG(DataGenerator, DataCollector):
@@ -846,7 +908,7 @@ class GXG(DataGenerator, DataCollector):
         self.make_gxg()
         self.wdlist = [self.maindir+'/G%sG' % x for x in self.aa1]
 
-        self.ener_df = pd.DataFrame(0.0,
+        self.G = pd.DataFrame(0.0,
             columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
             index=["G%sG" % x for x in self.aa1])
 

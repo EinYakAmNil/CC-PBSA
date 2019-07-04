@@ -13,9 +13,9 @@ def gxg(
 ):
     gxg = GXG(flags, min_mdp, energy_mdp, mdrun_table, pbeparams)
     gxg()
-    gxg.ener_df.to_csv('gxg.csv')
+    gxg.G.to_csv('gxg.csv')
     
-    return gxg.ener_df
+    return gxg.G
 
 
 def main():
@@ -43,7 +43,7 @@ def main():
         help="Calculate either the change of stability or affinity changing \
         effects of mutations.",
         default='stability',
-        choices={"stablitiy", "affinity"}
+        choices={'stability', 'affinity'}
     )
     options.add_argument(
         "--chains",
@@ -96,21 +96,6 @@ def main():
 
     cliargs = cliparser.parse_args()
 
-#    Very simple parser for reading in alpha, beta...
-    if cliargs.mode == 'stability':
-        with open(cliargs.stability_parameters, 'r') as fit:
-            parameters = fit.readlines()
-            parameters = [l[:-1] for l in parameters] # Remove newlines
-            parameters = [l.split("=") for l in parameters]
-            parameters = dict([(l[0], float(l[1])) for l in parameters])
-
-    if cliargs.mode == 'affinity':
-        with open(cliargs.affinity_parameters, 'r') as fit:
-            parameters = fit.readlines()
-            parameters = [l[:-1] for l in parameters] # Remove newlines
-            parameters = [l.split("=") for l in parameters]
-            parameters = dict([(l[0], float(l[1])) for l in parameters])
-
     if cliargs.gxg:
         print("Making a new GXG table.")
         GXG_ = gxg(
@@ -137,9 +122,18 @@ def main():
     data.fullrun()
     search = DataCollector(data)
     search.search_data()
-    print(search.ener_df)
+    print(search.G)
 
-    if cliargs.mode == 'stablility':
+#    Very simple parser for reading in alpha, beta...
+    if cliargs.mode == 'stability':
+        with open(cliargs.stability_parameters, 'r') as fit:
+            parameters = fit.readlines()
+            parameters = [l[:-1] for l in parameters] # Remove newlines
+            parameters = [l.split("=") for l in parameters]
+            parameters = dict([(l[0], float(l[1])) for l in parameters])
+
+        search.dstability(cliargs.gxg_table)
+
         search.ddstability(
             cliargs.gxg_table,
             parameters['alpha'],
@@ -148,7 +142,15 @@ def main():
             parameters['tau']
         )
 
-    if cliargs.mode == 'affinity':
+    elif cliargs.mode == 'affinity':
+        with open(cliargs.affinity_parameters, 'r') as fit:
+            parameters = fit.readlines()
+            parameters = [l[:-1] for l in parameters] # Remove newlines
+            parameters = [l.split("=") for l in parameters]
+            parameters = dict([(l[0], float(l[1])) for l in parameters])
+
+        search.daffinity()
+
         search.ddaffinity(
             parameters['alpha'],
             parameters['beta'],
@@ -156,3 +158,6 @@ def main():
             parameters['c'],
             parameters['pka']
         )
+
+    else:
+        print("BAD MODE INPUT")
