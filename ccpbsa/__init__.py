@@ -122,6 +122,7 @@ def main():
     data.fullrun()
     search = DataCollector(data)
     search.search_data()
+    print("G values:")
     print(search.G)
 
 #    Very simple parser for reading in alpha, beta...
@@ -133,6 +134,8 @@ def main():
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
         search.dstability(cliargs.gxg_table)
+        print("dG values:")
+        print(search.dG)
 
         search.ddstability(
             cliargs.gxg_table,
@@ -141,6 +144,8 @@ def main():
             parameters['gamma'],
             parameters['tau']
         )
+        print("ddG values:")
+        print(search.ddG)
 
     elif cliargs.mode == 'affinity':
         with open(cliargs.affinity_parameters, 'r') as fit:

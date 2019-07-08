@@ -266,13 +266,13 @@ class DataGenerator:
         """
         for d in self.wdlist:
             os.chdir(d)
-            fpf = d.split('/')[-1]
+            fpf = d.split('/')[-1] + '.pdb'
             trjconv = ['trjconv', '-s', gro, '-o', fpf]
             gmx(trjconv, input=b'0')
 
             os.chdir(self.maindir)
 
-    
+
     def concoord(self):
         """Performs the CONCOORD procedure to generate protein structure
         ensembles. Takes additional flags from "flag_parse" as input (pass it
@@ -787,7 +787,7 @@ class DataCollector:
             self.search_coulomb()
             self.search_solvation()
             self.search_area()
-            self.G.to_csv("dG.csv")
+            self.G.to_csv("G.csv")
 
 
     def dstability(self, gxg_table):
@@ -810,7 +810,25 @@ class DataCollector:
 
             self.dG['-TS'][i] = self.G['-TS'][i] - self.G['-TS'][0]
 
-        print(self.dG)
+        self.dG.to_csv("dG.csv")
+
+
+    def daffinity(self, gxg_table):
+        """Calculate the free energy difference between folded and unfolded
+        state based on the energy table passed. ddstability operates
+        independent of this function. This is just used for additional info.
+        """
+        gxgtable = pd.read_csv(gxg_table, index_col=0)
+        
+        for i in self.ddG.index:
+            aa_wt = "G%sG" % i.split('_')[-1][-1]
+            aa_mut = "G%sG" % i.split('_')[-1][0]
+            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
+
+            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
+
+            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
+
         self.dG.to_csv("dG.csv")
 
 
