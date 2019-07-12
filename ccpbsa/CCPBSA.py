@@ -394,7 +394,7 @@ class DataGenerator:
         
         for d in self.wdlist:
             os.chdir(d)
-            intpr = "in(tpr,%s)" % (d+'/sp.tpr')
+            intpr = "in(tpr,%s)" % (d+'/sp.tpr\n')
 
             with open(self.pbeparams, 'r') as pbeparams:
                 lines = pbeparams.readlines()
