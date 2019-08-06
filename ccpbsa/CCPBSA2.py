@@ -1,4 +1,4 @@
-#import glob
+import glob
 import os
 import shutil
 import subprocess
@@ -584,7 +584,7 @@ class DataGenerator:
                 for n in range(len(self))]
 
             gmx(trjcat+trrs)
-            gmx(covar+[self.maindir+'/'+en+"/1/confout.gro"], input=b'0')
+            gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'0')
             entropy = gmx(anaeig, stdout=subprocess.PIPE)
             log('entropy.log', entropy)
 
@@ -640,6 +640,7 @@ class DataCollector:
 
         self.n = len(data_obj)
         self.mut_df = data_obj.mut_df
+        self.wt = data_obj.wt
 
         for i, k in enumerate(self.mut_df["Mutation"].index):
         
@@ -654,22 +655,18 @@ class DataCollector:
         if self.mode == 'stability':
             self.G = pd.DataFrame(0.0, 
                 columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.mut_df.index
+                index=next(os.walk('.'))[1]
             )
-            self.G.loc[("1ayi"), :] = 0
-            self.dG = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.G.index[:-1]
-            )
+            self.dG = self.G.drop(self.wt)
             self.ddG = pd.DataFrame(0.0,
                 columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.G.index[:-1]
+                index=self.dG.index
             )
 
         else:
             self.G = pd.DataFrame(0.0, 
                 columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
-                index=flatten([data_obj.__repr__(), list(data_obj.mut_df.index)])
+                index=next(os.walk('.'))[1]
             )
 
 
@@ -846,21 +843,29 @@ class DataCollector:
         independent of this function. This is just used for additional info.
         """
         gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
-        for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
+        self.dG_unfld = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=[]
+        )
 
-            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
+        for c in gxgtable.columns:
 
-            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
+            for i in self.mut_df.index:
+                mut = [j for j in self.mut_df.loc[i, "Mutation"] if len(j) > 0]
+                wt = [j for j in self.mut_df.loc[i, "AA"] if len(j) > 0]
 
-            self.dG['SAS'][i] = self.G['SAS'][i] - self.G['SAS'][0]
+                unfld = [
+                    gxgtable[c]["G%sG" % mut[j]] - gxgtable[c]["G%sG" % wt[j]] \
+                        for j in range(len(mut))
+                ]
+                dfi = "+".join([j for j in i if len(j) > 0])
+                self.dG_unfld.loc[dfi, c] = sum(unfld)
+                self.dG_unfld.to_csv("dG_unfold.csv")
 
-            self.dG['-TS'][i] = self.G['-TS'][i] - self.G['-TS'][0]
+            for i in self.dG.index:
+                self.dG.loc[i, c] = self.G.loc[i, c] - self.G.loc[self.wt, c]
 
-        self.dG.to_csv("dG.csv")
+        self.dG.to_csv("dG_fold.csv")
 
 
     def daffinity(self, gxg_table):
@@ -882,38 +887,32 @@ class DataCollector:
         self.dG.to_csv("dG.csv")
 
 
-    def ddstability(self, gxg_table, alpha, beta, gamma, tau):
+    def ddstability(self, alpha, beta, gamma, tau):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
         """
-        gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
+        for c in self.ddG.columns[1:]:
+
+            for i in self.ddG.index:
+                self.ddG.loc[i, c] = self.dG.loc[i, c] - self.dG_unfld.loc[i, c]
+
+
         for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.ddG['SOLV'][i] = alpha * \
-                 (self.G['SOLV'][i] - self.G['SOLV'][0] - \
-                 gxgtable['SOLV'][aa_mut] + gxgtable['SOLV'][aa_wt])
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
+        
+        print(self.ddG)
 
-            self.ddG['COUL'][i] = alpha * \
-                 (self.G['COUL'][i] - self.G['COUL'][0] - \
-                 gxgtable['COUL'][aa_mut] + gxgtable['COUL'][aa_wt])
+        self.ddG["SOLV"] *= alpha
+        self.ddG["COUL"] *= alpha
+        self.ddG["LJ"] *= beta
+        self.ddG["SAS"] *= gamma
+        self.ddG["-TS"] *= tau
 
-            self.ddG['LJ'][i] = beta * \
-                 (self.G['LJ'][i] - self.G['LJ'][0] - \
-                 gxgtable['LJ'][aa_mut] + gxgtable['LJ'][aa_wt])
-
-            self.ddG['SAS'][i] = gamma * \
-                 (self.G['SAS'][i] - self.G['SAS'][0] - \
-                 gxgtable['SAS'][aa_mut] + gxgtable['SAS'][aa_wt])
-
-            self.ddG['-TS'][i] = tau * \
-                 (self.G['-TS'][i] - self.G['-TS'][0] - \
-                 gxgtable['-TS'][aa_mut] + gxgtable['-TS'][aa_wt])
-
-            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
-                self.ddG['LJ'][i] +self.ddG['SAS'][i] +self.ddG['-TS'][i]
+        for i in self.ddG.index:
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
+        
+        print(self.ddG)
 
         self.ddG.to_csv("ddG.csv")
 
@@ -951,36 +950,20 @@ x = DataGenerator(
     "/home/linkai/CC-PBSA/ccpbsa/parameters/energy.mdp",
     verbosity=1
 )
+x.fullrun()
 
 y = DataCollector(x)
+y.search_data()
+y.dstability("/home/linkai/CC-PBSA/ccpbsa/parameters/GXG.csv")
+y.ddstability(2, 2, 2, 2)
 print(y.G)
+print(y.dG_unfld)
 print(y.dG)
 print(y.ddG)
-#aa1 = list("ACDEFGHIKLMNPQRSTVWY")
-#aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
-#aa123 = dict(zip(aa1,aa3))
-#aa321 = dict(zip(aa3,aa1))
-#y = parse_mutations("mutations_1ayi.txt")
-#print(y)
-#
-#for i, k in enumerate(y["Mutation"].index):
-#
-#    for j, l in enumerate(k):
-#        mut = y["Mutation"][i][j]
-#        print(mut)
-#
-#        if len(mut) > 0:
-#            y["Mutation"][i][j] = aa321[mut]
-#
-#print(y)
-#
-#ener_df = pd.DataFrame(0, columns=["1", "2"], index=y.index)
-#ener_df.loc[("1ayi"), :] = 0
-#print(ener_df)
-#tmp = ener_df.iloc[0].copy()
-#ener_df.iloc[0] = ener_df.iloc[-1]
-#ener_df.iloc[-1] = tmp
-#print(ener_df)
+#gxg = pd.read_csv("/home/linkai/CC-PBSA/ccpbsa/parameters/GXG.csv", index_col=0)
+#print(gxg)
+#print(sum(gxg.loc["GAG", "SOLV":"COUL"]))
+
 
 #x.do_minimization()
 #x.update_structs()
