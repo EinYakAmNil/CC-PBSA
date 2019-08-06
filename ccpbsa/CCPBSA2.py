@@ -8,6 +8,20 @@ import pymol
 pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
+def log(fname, proc_obj):
+    """Write stdout and stderr of a process object to a file.
+    """
+    log_file = open(fname, 'a')
+
+    if hasattr(proc_obj.stdout, 'decode'):
+        log_file.write(proc_obj.stdout.decode('utf-8'))
+
+    if hasattr(proc_obj.stderr, 'decode'):
+        log_file.write(proc_obj.stderr.decode('utf-8'))
+
+    log_file.close()
+
+
 def int_in_str(*strings):
     """Takes strings as input and tries to find integers in them. Used to find
     the residue number in the mutation file.
@@ -114,7 +128,7 @@ def parse_mutations(file_):
     return mut_df
 
 
-def concoord(verbosity=1, *pdb, **flags):
+def concoord(pipe, *pdb, **flags):
     """Takes arbitrarily many .pdb files as input to generate structure
     ensembles using CONCOORD. Additional flags can be passed via a dictionary
     with the keys corresponding to the programs, i.e. \"dist\" and \"disco\".
@@ -122,15 +136,6 @@ def concoord(verbosity=1, *pdb, **flags):
     either 0 (do not show any messages) or 1 (show all messages).
     Returns the two process objects of dist and disco.
     """
-    if verbosity == 0:
-        pipe = subprocess.PIPE
-
-    elif verbosity == 1:
-        pipe = None
-
-    else:
-        raise ValueError("Choose verbosity as an integer between 0 and 1.")
-
     for p in pdb:
         os.chdir("/".join([i for i in p.split("/")[:-1]]+["."]))
         
@@ -178,51 +183,22 @@ def minimize(
     editconf,
     grompp,
     mdrun,
-    verbosity=1
+    pipe
 ):
     """Run a energy minimization starting from a .pdb file.
     """
-    if verbosity == 0:
-        pipe = {
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE
-        }
-
-    elif verbosity == 1:
-        pipe = {
-            "stdout": None,
-            "stderr": None
-        }
-
-    else:
-        raise ValueError("Choose verbosity as an integer between 0 and 1.")
-
-    gmx(['pdb2gmx'] + pdb2gmx, **pipe)
-    gmx(['editconf'] + editconf, **pipe)
-    gmx(['grompp'] + grompp, **pipe)
-    gmx(['mdrun'] + mdrun, **pipe)
+    gmx(['pdb2gmx'] + pdb2gmx, stdout=pipe, stderr=pipe)
+    gmx(['editconf'] + editconf, stdout=pipe, stderr=pipe)
+    gmx(['grompp'] + grompp, stdout=pipe, stderr=pipe)
+    gmx(['mdrun'] + mdrun, stdout=pipe, stderr=pipe)
  
 
-def gro2pdb(gro, pdb, verbosity=1):
-    if verbosity == 0:
-        pipe = {
-            "stdout": subprocess.PIPE,
-            "stderr": subprocess.PIPE
-        }
-
-    elif verbosity == 1:
-        pipe = {
-            "stdout": None,
-            "stderr": None
-        }
-
-    else:
-        raise ValueError("Choose verbosity as an integer between 0 and 1.")
-
+def gro2pdb(gro, tpr, pdb, pipe):
     trjconv = gmx(
-        ['trjconv', '-f', gro, '-s', gro, '-o', pdb],
+        ['trjconv', '-f', gro, '-s', tpr, '-o', pdb],
         input=b'0',
-        **pipe
+        stdout=pipe,
+        stderr=pipe
     )
     
     return trjconv
@@ -263,8 +239,18 @@ class DataGenerator:
         flags, # file specifying the flags for CONCOORD and GROMACS
         calculate, # Output either stability or affinity
         chains, # specify chains for affinity calculation
+        spmdp,
+        verbosity=0
     ):
-        self.verb = 1
+        if verbosity == 0:
+            self.pipe = subprocess.PIPE
+
+        elif verbosity == 1:
+            self.pipe = None
+
+        else:
+            raise ValueError
+
         self.wtpdb = os.getcwd() + "/" + wtpdb
         self.wt = wtpdb[:wtpdb.find(".pdb")]
         self.flags = parse_flags(flags)
@@ -301,11 +287,15 @@ class DataGenerator:
                 v[v.index(ori)] = abs_
                 self.flags[k] = v
 
+        shutil.copy(spmdp, self.maindir)
+        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
+        print(self.spmdp)
+
         os.chdir(self.maindir)
 
 #        Create mutated structures during initialization of object. This is
 #        done the be consistent with the working directories (wds) attribute
-#        self.do_mutate()
+        self.do_mutate()
 
 
     def __len__(self):
@@ -350,7 +340,7 @@ class DataGenerator:
         for d in self.wds:
             os.chdir(d)
             pdb = d.split("/")[-1] + ".pdb"
-            concoord(self.verb, pdb, **self.flags, input=b'1\n1')
+            concoord(self.pipe, pdb, **self.flags, input=b'2\n1')
 
             for i in range(1, len(self)+1):
                 os.mkdir(str(i))
@@ -366,7 +356,8 @@ class DataGenerator:
         """Create an .ndx file using an .tpr file to select chains for affinity
         calculation.
         """
-        chainselec = [b'chain %b\n' % bytes(c, 'utf-8') for c in self.chains]
+        chainselec = [b'chain %b\n' % bytes(c, 'utf-8') \
+                for c in flatten(self.chains)]
         chainselec = b''.join(chainselec) + b'q\n'
         ndx = gmx(
             ['make_ndx', '-f', tpr],
@@ -388,12 +379,50 @@ class DataGenerator:
                 self.flags['pdb2gmx'] + ['-f', pdb],
                 self.flags['editconf'],
                 self.flags['grompp'],
-                self.flags['mdrun']
+                self.flags['mdrun'],
+                pipe=self.pipe
             )
 
             if self.calculate == 'affinity':
                 self.chaindx()
-                gmx
+
+                for cn, c in enumerate(flatten(self.chains)):
+                    gmx(
+                        [
+                            'editconf', '-f', 'conf.gro',
+                            '-n', 'index.ndx',
+                            '-o', 'chain%s.pdb' % c
+                        ],
+                        stdout=self.pipe,
+                        stderr=self.pipe,
+                        input=bytes(str(10+cn), 'utf-8')
+                    )
+                    minimize(
+                        self.flags['pdb2gmx'] + \
+                            [
+                                '-f', 'chain%s.pdb' % c,
+                                '-o', 'chain%s.gro' % c,
+                                '-p', 'chain%s.top' % c,
+                                '-i', 'chain%s.itp' % c
+                            ],
+                        self.flags['editconf'] + \
+                                [
+                                    '-f', 'chain%s.gro' % c,
+                                    '-o', 'chain%s.gro' % c
+                                ],
+                        self.flags['grompp'] + \
+                            [
+                                '-c', 'chain%s.gro' % c,
+                                '-p', 'chain%s.top' % c,
+                                '-o', 'chain%s.tpr' % c
+                            ],
+                        self.flags['mdrun'] + \
+                            [
+                                '-deffnm', 'chain%s' % c,
+                                '-c', 'chain%sout.gro' % c
+                            ],
+                        pipe=self.pipe
+                    )
 
             os.chdir(self.maindir)
 
@@ -406,9 +435,35 @@ class DataGenerator:
             os.chdir(d)
             gro2pdb(
                 'confout.gro',
+                'topol.tpr',
                 d.split("/")[-1] + ".pdb",
-                verbosity=self.verb
+                pipe=self.pipe
             )
+
+            os.chdir(self.maindir)
+
+
+    def single_point(self):
+        """Creates a single point .tpr file.
+        """
+        for d in self.wds:
+            os.chdir(d)
+            gmx([
+                'grompp', '-f', self.spmdp,
+                '-c', 'confout.gro',
+                '-o', 'sp.tpr',
+                '-maxwarn', '1'
+            ])
+
+            if self.calculate == 'affinity':
+
+                for c in flatten(self.chains):
+                    gmx([
+                        'grompp', '-f', self.spmdp,
+                        '-c', 'chain%sout.gro' % c,
+                        '-o', 'chain%ssp.tpr' % c,
+                        '-maxwarn', '1'
+                    ])
 
             os.chdir(self.maindir)
 
@@ -420,61 +475,152 @@ class DataGenerator:
         Parameters for this are stored in a separate file for gropbe. Reference
         it through the main parameter file for CC/PBSA.
         """
-        if self.verb == 1:
-            pipe = {
-                "stdout": subprocess.PIPE,
-                "stderr": None,
-            }
-
-        else:
-            pipe = {
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
-            }
         chainselec = ",".join(str(i) for i in range(len(flatten(self.chains))))
 
         for d in self.wds:
             os.chdir(d)
+            shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+
+            with open('gropbe.prm', 'a') as params:
+                params.write("in(tpr,sp.tpr)")
+
             gropbe = subprocess.run(
-                ["gropbe", self.flags["gropbe"][0]],
-                input=bytes(chainselec),
-                **pipe
+                ["gropbe", 'gropbe.prm'],
+                input=bytes(chainselec, 'utf-8'),
+                stdout=subprocess.PIPE,
+                stderr=self.pipe
             )
+            log("solvation.log", gropbe)
 
             if self.calculate == 'affinity':
                 selidx = flatten(self.chains)
                 selidx.sort()
-                sel1 = ",".join([str(selidx.index(i)) for i in x.chains[0]])
-                sel2 = ",".join([str(selidx.index(i)) for i in x.chains[1]])
+                sel1 = ",".join([str(selidx.index(i)) for i in \
+                    range(len(self.chains[0]))])
+                sel2 = ",".join([str(selidx.index(i)) for i in \
+                    range(len(self.chains[1]))])
+
+                with open('gropbe.prm', 'a') as params:
+                    params.append("in(tpr,sp.tpr)")
+
+                gropbe = subprocess.run(
+                    ["gropbe", self.flags['gropbe'][0]],
+                    input=bytes(chainselec),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                log("solvation.log", gropbe)
+
+                with open('gropbe.prm', 'a') as params:
+                    params.append("in(tpr,sp.tpr)")
+
+                gropbe = subprocess.run(
+                    ["gropbe", self.flags['gropbe'][0]],
+                    input=bytes(chainselec),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                log("solvation.log", gropbe)
+
+            os.chdir(self.maindir)
+
+
+    def lj(self):
+        """Calculate the Lennard-Jones Energy based on a sp.tpr
+        """
+        for d in self.wds:
+            os.chdir(d)
+
+            gmx([
+                'mdrun', '-s', 'sp.tpr',
+                '-rerun', 'confout.gro',
+                '-deffnm', 'sp'
+            ])
+            lj = gmx(
+                ['energy', '-f', 'sp.edr', '-sum', 'yes'],
+                input=b'5 7',
+                stdout=subprocess.PIPE,
+                stderr=None
+            )
+            log("lj.log", lj)
+
+            os.chdir(self.maindir)
+
+
+    def area(self):
+        """Calculate the solvent accessible surface area and saves it to
+        area.xvg. If the mode is set to affinity, only the wt protein structure
+        ensemble will be used and the values for the interaction surface will
+        be written into the .xvg file
+        """
+        sasa = ['sasa', '-s', 'confout.gro']
+
+        for d in self.wds:
+            os.chdir(d)
+
+            if self.mode == 'affinity':
+                gmx(sasa + ['-n', 'index.ndx', '-output', '10', '11'],
+                    input=b'0')
+
+            else:
+                gmx(sasa, input=b'0')
+
+            os.chdir(self.maindir)
+
+
+    def schlitter(self):
+        """Calculates an upper limit of the entropy according to Schlitter's
+        formula. Used in .fullrun() if the mode is stability
+        """
+        trjcat = ['trjcat', '-cat', 'yes', '-f']
+        covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
+        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
+        ensembles = [i.split('/')[-2] for i in self.wds]
+
+        for en in ensembles:
+            os.chdir(en)
+            trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
+                for n in range(len(self))]
+
+            gmx(trjcat+trrs)
+            gmx(covar+[self.maindir+'/'+en+"/1/confout.gro"], input=b'0')
+            entropy = gmx(anaeig, stdout=subprocess.PIPE)
+            log('entropy.log', entropy)
+
+            os.chdir(self.maindir)
 
 
     def fullrun(self):
         """Use all of the default behaviour to generate the data.
         """
         if self.calculate == 'stability':
-            pass
+            self.do_minimization()
+            self.update_structs()
+            self.do_concoord()
+            self.do_minimization()
+            self.single_point()
+            self.electrostatics()
 
-        if self.calulate == 'affinity':
+        if self.calculate == 'affinity':
 #            Temporarily disable minimization of chains.
             self.calculate = 'naffinity'
             self.do_minimization()
-            self.do_concoord()
 #            And turn it back on.
             self.calculate = 'affinity'
+            self.update_structs()
+            self.do_concoord()
             self.do_minimization()
+            self.single_point()
             self.electrostatics()
                 
 
-
 x = DataGenerator(
-    "/home/linkai/test/1bxi.pdb",
-    "mutations_1bxi.txt",
+    "1ayi.pdb",
+    "mutations_1ayi.txt",
     "flags.txt",
-    "affinity",
-    [("A"), ("B")],
+    "stability",
+    [("A",)],
+    "/home/linkai/CC-PBSA/ccpbsa/parameters/energy.mdp",
+    verbosity=1
 )
-x.do_mutate()
-x.do_minimization()
-x.update_structs()
-x.do_concoord()
-x.do_minimization()
+x.fullrun()
