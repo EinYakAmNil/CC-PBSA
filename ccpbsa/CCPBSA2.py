@@ -489,6 +489,7 @@ class DataGenerator:
                 stdout=subprocess.PIPE,
                 stderr=self.pipe
             )
+            gropbe.stderr = None
             log("solvation.log", gropbe)
 
             if self.calculate == 'affinity':
@@ -506,7 +507,7 @@ class DataGenerator:
                     ["gropbe", self.flags['gropbe'][0]],
                     input=bytes(chainselec),
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    stderr=self.pipe
                 )
                 gropbe.stderr = None
                 log("electrostatics.log", gropbe)
