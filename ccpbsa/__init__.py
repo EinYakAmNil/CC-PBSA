@@ -1,21 +1,21 @@
-from .CCPBSA import *
+from .CCPBSA2 import *
 import argparse
 import os
 import sys
 
 
-def gxg(
-    flags,
-    min_mdp,
-    energy_mdp,
-    mdrun_table,
-    pbeparams
-):
-    gxg = GXG(flags, min_mdp, energy_mdp, mdrun_table, pbeparams)
-    gxg()
-    gxg.G.to_csv('gxg.csv')
-    
-    return gxg.G
+#def gxg(
+#    flags,
+#    min_mdp,
+#    energy_mdp,
+#    mdrun_table,
+#    pbeparams
+#):
+#    gxg = GXG(flags, min_mdp, energy_mdp, mdrun_table, pbeparams)
+#    gxg()
+#    gxg.G.to_csv('gxg.csv')
+#    
+#    return gxg.G
 
 
 def main():
@@ -93,37 +93,45 @@ def main():
         help="Creates a new gxg.csv for dG calculation of the unfolded state.",
         action='store_true'
     )
+    options.add_argument(
+        "-v",
+        help="Print stdout and stderr of the programs",
+        action='store_true'
+    )
 
     cliargs = cliparser.parse_args()
 
-    if cliargs.gxg:
-        print("Making a new GXG table.")
-        GXG_ = gxg(
-            cliargs.flags,
-            cliargs.minimization_mdp,
-            cliargs.energy_mdp,
-            cliargs.dielectric_table,
-            cliargs.gropbe
-        )
-        print(GXG_)
-        sys.exit()
+#    if cliargs.gxg:
+#        print("Making a new GXG table.")
+#        GXG_ = gxg(
+#            cliargs.flags,
+#            cliargs.minimization_mdp,
+#            cliargs.energy_mdp,
+#            cliargs.dielectric_table,
+#            cliargs.gropbe
+#        )
+#        print(GXG_)
+#        sys.exit()
+    if cliargs.v:
+        verbose = 1
+    else:
+        verbose = 0
 
     data = DataGenerator(
-        wt = cliargs.wildtype,
+        wtpdb = cliargs.wildtype,
         mutlist = cliargs.mutations,
         flags = cliargs.flags,
         calculate = cliargs.mode,
         chains = cliargs.chains,
-        min_mdp = cliargs.minimization_mdp,
-        energy_mdp = cliargs.energy_mdp,
-        mdrun_table = cliargs.dielectric_table,
-        pbeparams = cliargs.gropbe
+        spmdp = cliargs.energy_mdp,
+        verbosity = verbose
     )
     data.fullrun()
     search = DataCollector(data)
-    search.search_data()
+    G = search.search_data()
     print("G values:")
     print(search.G)
+    G.to_csv("G.csv")
 
 #    Very simple parser for reading in alpha, beta...
     if cliargs.mode == 'stability':
@@ -134,18 +142,20 @@ def main():
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
         search.dstability(cliargs.gxg_table)
-        print("dG values:")
+        print("dG folded values:")
         print(search.dG)
+        print("dG unfolded values (GXG):")
+        print(search.dG_unfld)
+        search.dG.to_csv.to_csv("dG_fold.csv")
+        search.dG_unfld.to_csv("dG_unfold.csv")
 
-        search.ddstability(
-            cliargs.gxg_table,
-            parameters['alpha'],
-            parameters['beta'],
-            parameters['gamma'],
-            parameters['tau']
-        )
+        ddG = search.ddstability()
         print("ddG values:")
         print(search.ddG)
+        search.ddG.to_csv("ddG.csv")
+        ddG_fit = search.fitstability(**parameters)
+        print(ddG_fit)
+        search.ddG.to_csv("ddG_fit.csv")
 
     elif cliargs.mode == 'affinity':
         with open(cliargs.affinity_parameters, 'r') as fit:

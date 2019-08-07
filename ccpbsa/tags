@@ -4,5 +4,50 @@
 !_TAG_PROGRAM_NAME	Exuberant Ctags	//
 !_TAG_PROGRAM_URL	http://ctags.sourceforge.net	/official site/
 !_TAG_PROGRAM_VERSION	5.9~svn20110310	//
+DataCollector	CCPBSA.py	/^class DataCollector:$/;"	c
+DataGenerator	CCPBSA.py	/^class DataGenerator:$/;"	c
+GXG	CCPBSA.py	/^class GXG(DataGenerator, DataCollector):$/;"	c
+__add__	CCPBSA.py	/^    def __add__(self, other):$/;"	m	class:DataGenerator	file:
+__call__	CCPBSA.py	/^    def __call__(self):$/;"	m	class:GXG	file:
+__init__	CCPBSA.py	/^    def __init__($/;"	m	class:GXG
+__init__	CCPBSA.py	/^    def __init__(self, data_obj):$/;"	m	class:DataCollector
+__init__	CCPBSA.py	/^    def __init__(self,$/;"	m	class:DataGenerator
+__len__	CCPBSA.py	/^    def __len__(self):$/;"	m	class:DataCollector	file:
+__len__	CCPBSA.py	/^    def __len__(self):$/;"	m	class:DataGenerator	file:
+__repr__	CCPBSA.py	/^    def __repr__(self):$/;"	m	class:DataGenerator	file:
+__repr__	CCPBSA.py	/^    def __repr__(self):$/;"	m	class:GXG	file:
+aa1	CCPBSA.py	/^    aa1 = list("ACDEFGHIKLMNPQRSTVWY")$/;"	v	class:DataCollector
+aa1	CCPBSA.py	/^    aa1 = list("ACDEFGHIKLMNPQRSTVWY")$/;"	v	class:GXG
+aa123	CCPBSA.py	/^    aa123 = dict(zip(aa1,aa3))$/;"	v	class:DataCollector
+aa3	CCPBSA.py	/^    aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()$/;"	v	class:DataCollector
+aa321	CCPBSA.py	/^    aa321 = dict(zip(aa3,aa1))$/;"	v	class:DataCollector
+area	CCPBSA.py	/^    def area(self):$/;"	m	class:DataGenerator
+cmd	CCPBSA.py	/^cmd = pymol.cmd$/;"	v
+concoord	CCPBSA.py	/^    def concoord(self):$/;"	m	class:DataGenerator
+coulomb_lj	CCPBSA.py	/^    def coulomb_lj(self):$/;"	m	class:DataGenerator
+daffinity	CCPBSA.py	/^    def daffinity(self, gxg_table):$/;"	m	class:DataCollector
+ddaffinity	CCPBSA.py	/^    def ddaffinity(self, alpha, beta, gamma, c, pka):$/;"	m	class:DataCollector
+ddstability	CCPBSA.py	/^    def ddstability(self, gxg_table, alpha, beta, gamma, tau):$/;"	m	class:DataCollector
+dstability	CCPBSA.py	/^    def dstability(self, gxg_table):$/;"	m	class:DataCollector
+fullrun	CCPBSA.py	/^    def fullrun(self):$/;"	m	class:DataGenerator
+gmx	CCPBSA.py	/^def gmx(prog, **kwargs):$/;"	f
+gmx2pdb	CCPBSA.py	/^    def gmx2pdb(self, gro='confout.gro'):$/;"	m	class:DataGenerator
 gxg	__init__.py	/^def gxg($/;"	f
+int_in_str	CCPBSA.py	/^def int_in_str(lst):$/;"	f
+log	CCPBSA.py	/^def log(fname, proc_obj):$/;"	f
 main	__init__.py	/^def main():$/;"	f
+make_gxg	CCPBSA.py	/^    def make_gxg(self):$/;"	m	class:GXG
+makedir	CCPBSA.py	/^def makedir(dirname):$/;"	f
+minimize	CCPBSA.py	/^    def minimize(self):$/;"	m	class:DataGenerator
+mutate	CCPBSA.py	/^    def mutate(self):$/;"	m	class:DataGenerator
+parse_flags	CCPBSA.py	/^    def parse_flags(self, flags_raw):$/;"	m	class:DataGenerator
+parse_mutlist	CCPBSA.py	/^    def parse_mutlist(self, mutlist_raw):$/;"	m	class:DataGenerator
+schlitter	CCPBSA.py	/^    def schlitter(self):$/;"	m	class:DataGenerator
+search_area	CCPBSA.py	/^    def search_area(self):$/;"	m	class:DataCollector
+search_coulomb	CCPBSA.py	/^    def search_coulomb(self):$/;"	m	class:DataCollector
+search_data	CCPBSA.py	/^    def search_data(self):$/;"	m	class:DataCollector
+search_entropy	CCPBSA.py	/^    def search_entropy(self):$/;"	m	class:DataCollector
+search_lj	CCPBSA.py	/^    def search_lj(self):$/;"	m	class:DataCollector
+search_solvation	CCPBSA.py	/^    def search_solvation(self):$/;"	m	class:DataCollector
+solvation_energy	CCPBSA.py	/^    def solvation_energy(self):$/;"	m	class:DataGenerator
+unpack	CCPBSA.py	/^def unpack(lst=[]):$/;"	f

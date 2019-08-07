@@ -1,23 +1,29 @@
 ;characters after semicolons are comments
-;encase flags for CONCOORD in square brackets
-;encase flags for GROMACS in curly brackets
+;encase flags for programs in square brackets
 ;empty lines are ignored
 [dist]
 
   [pdb2gmx]
-ff=oplsaa
-water=none
+-ff=oplsaa
+-water=none
 
 
  [editconf] ;This is a comment aswell
-bt=cubic
-d=2
-c ; So is this
+-bt=cubic
+-d=2
+-c ; So is this
 
 [grompp]
-maxwarn=1
+-maxwarn=1
+-f=/home/linkai/CC-PBSA/ccpbsa/parameters/min.mdp
 
 [mdrun]
-nt=1
+-nt=1
+-tablep=/home/linkai/CC-PBSA/ccpbsa/parameters/table4r-6-12.xvg
+-table=/home/linkai/CC-PBSA/ccpbsa/parameters/table4r-6-12.xvg
+
  [disco]
-n=300
+-n=3
+
+[gropbe]
+gropbe.txt

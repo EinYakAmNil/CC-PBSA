@@ -827,14 +827,16 @@ class DataCollector:
             self.search_solvation()
             self.search_area()
             self.search_entropy()
-            self.G.to_csv("G.csv")
+
+            return self.G
 
         if self.mode == 'affinity':
             self.search_lj()
             self.search_coulomb()
             self.search_solvation()
             self.search_area()
-            self.G.to_csv("G.csv")
+
+            return self.G
 
 
     def dstability(self, gxg_table):
@@ -865,7 +867,7 @@ class DataCollector:
             for i in self.dG.index:
                 self.dG.loc[i, c] = self.G.loc[i, c] - self.G.loc[self.wt, c]
 
-        self.dG.to_csv("dG_fold.csv")
+        return self.dG, self.dG_unfld
 
 
     def daffinity(self, gxg_table):
@@ -887,7 +889,7 @@ class DataCollector:
         self.dG.to_csv("dG.csv")
 
 
-    def ddstability(self, alpha, beta, gamma, tau):
+    def ddstability(self):
         """Calculate the folding free energy difference. For the stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
@@ -901,8 +903,11 @@ class DataCollector:
         for i in self.ddG.index:
             self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
         
-        print(self.ddG)
+        return self.ddG
 
+    def fitstability(self, alpha, beta, gamma, tau):
+        """Multiply the of each energy contribution by a certain value.
+        """
         self.ddG["SOLV"] *= alpha
         self.ddG["COUL"] *= alpha
         self.ddG["LJ"] *= beta
@@ -911,10 +916,8 @@ class DataCollector:
 
         for i in self.ddG.index:
             self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
-        
-        print(self.ddG)
 
-        self.ddG.to_csv("ddG.csv")
+        return self.ddG
 
 
     def ddaffinity(self, alpha, beta, gamma, c, pka):
@@ -939,35 +942,3 @@ class DataCollector:
                 self.ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c +self.ddG['PKA'][i]
 
         self.ddG.to_csv("ddG.csv")
-
-
-x = DataGenerator(
-    "1ayi.pdb",
-    "mutations_1ayi.txt",
-    "flags.txt",
-    "stability",
-    [("A",)],
-    "/home/linkai/CC-PBSA/ccpbsa/parameters/energy.mdp",
-    verbosity=1
-)
-x.fullrun()
-
-y = DataCollector(x)
-y.search_data()
-y.dstability("/home/linkai/CC-PBSA/ccpbsa/parameters/GXG.csv")
-y.ddstability(2, 2, 2, 2)
-print(y.G)
-print(y.dG_unfld)
-print(y.dG)
-print(y.ddG)
-#gxg = pd.read_csv("/home/linkai/CC-PBSA/ccpbsa/parameters/GXG.csv", index_col=0)
-#print(gxg)
-#print(sum(gxg.loc["GAG", "SOLV":"COUL"]))
-
-
-#x.do_minimization()
-#x.update_structs()
-#x.do_concoord()
-#x.do_minimization()
-#x.single_point()
-#x.schlitter()
