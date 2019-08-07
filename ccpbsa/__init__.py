@@ -146,7 +146,7 @@ def main():
         print(search.dG)
         print("dG unfolded values (GXG):")
         print(search.dG_unfld)
-        search.dG.to_csv.to_csv("dG_fold.csv")
+        search.dG.to_csv("dG_fold.csv")
         search.dG_unfld.to_csv("dG_unfold.csv")
 
         ddG = search.ddstability()

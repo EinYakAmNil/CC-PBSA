@@ -508,6 +508,7 @@ class DataGenerator:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE
                 )
+                gropbe.stderr = None
                 log("electrostatics.log", gropbe)
 
                 with open('gropbe.prm', 'a') as params:
