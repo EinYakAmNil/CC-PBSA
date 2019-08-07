@@ -83,8 +83,8 @@ def main():
             paramfile.write("-tablep="+pkgpath+'/parameters/table4r-6-12.xvg\n')
             paramfile.write("-table="+pkgpath+'/parameters/table4r-6-12.xvg\n')
             paramfile.write("[grompp]\n")
-            paramfile.write("-maxwarn=1")
-            paramfile.write("-f="+pkgpath+'/parameters/table4r-6-12.xvg\n')
+            paramfile.write("-maxwarn=1\n")
+            paramfile.write("-f="+pkgpath+'/parameters/min.mdp\n')
             paramfile.write("[gropbe]\n")
             paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
             sys.exit(0)
@@ -104,24 +104,23 @@ def main():
     else:
         verbose = 0
 
-    data = DataGenerator(
-        wtpdb = cliargs.wildtype,
-        mutlist = cliargs.mutations,
-        flags = cliargs.flags,
-        calculate = cliargs.mode,
-        chains = cliargs.chains,
-        spmdp = cliargs.energy_mdp,
-        verbosity = verbose
-    )
-    data.fullrun()
-    search = DataCollector(data)
-    G = search.search_data()
-    print("G values:")
-    print(search.G)
-    G.to_csv("G.csv")
+    if cliargs.routine == 'stability':
+        data = DataGenerator(
+            wtpdb = cliargs.wildtype,
+            mutlist = cliargs.mutations,
+            flags = cliargs.flags,
+            calculate = 'stability',
+            chains = cliargs.chains,
+            spmdp = cliargs.energy_mdp,
+            verbosity = verbose
+        )
+        data.fullrun()
+        search = DataCollector(data)
+        G = search.search_data()
+        print("G values:")
+        print(search.G)
+        G.to_csv("G.csv")
 
-#    Very simple parser for reading in alpha, beta...
-    if cliargs.mode == 'stability':
         with open(cliargs.stability_parameters, 'r') as fit:
             parameters = fit.readlines()
             parameters = [l[:-1] for l in parameters] # Remove newlines
