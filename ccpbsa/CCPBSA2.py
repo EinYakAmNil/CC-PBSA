@@ -237,8 +237,6 @@ class DataGenerator:
         wtpdb, # wild type .pdb file
         mutlist, # list of mutations
         flags, # file specifying the flags for CONCOORD and GROMACS
-        calculate, # Output either stability or affinity
-        chains, # specify chains for affinity calculation
         spmdp,
         verbosity=0
     ):
@@ -256,8 +254,6 @@ class DataGenerator:
         self.flags = parse_flags(flags)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.mut_df = parse_mutations(mutlist)
-        self.calculate = calculate
-        self.chains = chains
         self.wds = [self.wt]
         self.wds.extend(["+".join([j for j in i if len(j) > 0]) \
             for i in self.mut_df.index])
@@ -351,21 +347,6 @@ class DataGenerator:
                 for i in range(1, len(self)+1)]
 
 
-    def chaindx(self, tpr='topol.tpr', **kwargs):
-        """Create an .ndx file using an .tpr file to select chains for affinity
-        calculation.
-        """
-        chainselec = [b'chain %b\n' % bytes(c, 'utf-8') \
-                for c in flatten(self.chains)]
-        chainselec = b''.join(chainselec) + b'q\n'
-        ndx = gmx(
-            ['make_ndx', '-f', tpr],
-            input=chainselec,
-            **kwargs
-        )
-        return ndx
-
-
     def do_minimization(self):
         """Do energy minimization on the structures in self.wds. If the
         affinity is to be calculated, then an index file for the chains will be
@@ -381,47 +362,6 @@ class DataGenerator:
                 self.flags['mdrun'],
                 pipe=self.pipe
             )
-
-            if self.calculate == 'affinity':
-                self.chaindx()
-
-                for cn, c in enumerate(flatten(self.chains)):
-                    gmx(
-                        [
-                            'editconf', '-f', 'conf.gro',
-                            '-n', 'index.ndx',
-                            '-o', 'chain%s.pdb' % c
-                        ],
-                        stdout=self.pipe,
-                        stderr=self.pipe,
-                        input=bytes(str(10+cn), 'utf-8')
-                    )
-                    minimize(
-                        self.flags['pdb2gmx'] + \
-                            [
-                                '-f', 'chain%s.pdb' % c,
-                                '-o', 'chain%s.gro' % c,
-                                '-p', 'chain%s.top' % c,
-                                '-i', 'chain%s.itp' % c
-                            ],
-                        self.flags['editconf'] + \
-                                [
-                                    '-f', 'chain%s.gro' % c,
-                                    '-o', 'chain%s.gro' % c
-                                ],
-                        self.flags['grompp'] + \
-                            [
-                                '-c', 'chain%s.gro' % c,
-                                '-p', 'chain%s.top' % c,
-                                '-o', 'chain%s.tpr' % c
-                            ],
-                        self.flags['mdrun'] + \
-                            [
-                                '-deffnm', 'chain%s' % c,
-                                '-c', 'chain%sout.gro' % c
-                            ],
-                        pipe=self.pipe
-                    )
 
             os.chdir(self.maindir)
 
@@ -454,16 +394,6 @@ class DataGenerator:
                 '-maxwarn', '1'
             ])
 
-            if self.calculate == 'affinity':
-
-                for c in flatten(self.chains):
-                    gmx([
-                        'grompp', '-f', self.spmdp,
-                        '-c', 'chain%sout.gro' % c,
-                        '-o', 'chain%ssp.tpr' % c,
-                        '-maxwarn', '1'
-                    ])
-
             os.chdir(self.maindir)
 
 
@@ -491,37 +421,6 @@ class DataGenerator:
             )
             gropbe.stderr = None
             log("solvation.log", gropbe)
-
-            if self.calculate == 'affinity':
-                selidx = flatten(self.chains)
-                selidx.sort()
-                sel1 = ",".join([str(selidx.index(i)) for i in \
-                    range(len(self.chains[0]))])
-                sel2 = ",".join([str(selidx.index(i)) for i in \
-                    range(len(self.chains[1]))])
-
-                with open('gropbe.prm', 'a') as params:
-                    params.append("in(tpr,sp.tpr)")
-
-                gropbe = subprocess.run(
-                    ["gropbe", self.flags['gropbe'][0]],
-                    input=bytes(chainselec),
-                    stdout=subprocess.PIPE,
-                    stderr=self.pipe
-                )
-                gropbe.stderr = None
-                log("electrostatics.log", gropbe)
-
-                with open('gropbe.prm', 'a') as params:
-                    params.append("in(tpr,sp.tpr)")
-
-                gropbe = subprocess.run(
-                    ["gropbe", self.flags['gropbe'][0]],
-                    input=bytes(chainselec),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
-                )
-                log("solvation.log", gropbe)
 
             os.chdir(self.maindir)
 
@@ -555,18 +454,9 @@ class DataGenerator:
         ensemble will be used and the values for the interaction surface will
         be written into the .xvg file
         """
-        sasa = ['sasa', '-s', 'confout.gro']
-
         for d in self.wds:
             os.chdir(d)
-
-            if self.calculate == 'affinity':
-                gmx(sasa + ['-n', 'index.ndx', '-output', '10', '11'],
-                    input=b'0')
-
-            else:
-                gmx(sasa + ['-s', 'confout.gro'], input=b'0')
-
+            gmx(['sasa', '-s', 'confout.gro'], input=b'0')
             os.chdir(self.maindir)
 
 
@@ -596,31 +486,123 @@ class DataGenerator:
     def fullrun(self):
         """Use all of the default behaviour to generate the data.
         """
-        if self.calculate == 'stability':
-            self.do_minimization()
-            self.update_structs()
-            self.do_concoord()
-            self.do_minimization()
-            self.single_point()
-            self.electrostatics()
-            self.lj()
-            self.area()
-            self.schlitter()
+        self.do_minimization()
+        self.update_structs()
+        self.do_concoord()
+        self.do_minimization()
+        self.single_point()
+        self.electrostatics()
+        self.lj()
+        self.area()
+        self.schlitter()
 
-        if self.calculate == 'affinity':
-#            Temporarily disable minimization of chains.
-            self.calculate = 'naffinity'
-            self.do_minimization()
-#            And turn it back on.
-            self.calculate = 'affinity'
-            self.update_structs()
-            self.do_concoord()
-            self.do_minimization()
-            self.single_point()
-            self.electrostatics()
-            self.lj()
-            self.area()
-                
+
+class AffintyGenerator(DataGenerator):
+    """Subclassed from DataGenerator to add additional procedures to calculate
+    the affinity changes in mutated proteins
+    """
+    def __init__(
+        self,
+        wtpdb,
+        mutlist,
+        flags,
+        chains,
+        spmdp,
+        verbosity=0
+    ):
+        super().__init__(
+           wtpdb=wtpdb,
+           mutlist=mutlist,
+           flags=flags,
+           spmdp=spmdp,
+           verbosity=verbosity
+        )
+        self.prot1 = chains
+        cmd.load(wtpdb)
+        self.prot2 = [c for c in cmd.get_chains() if c not in self.prot1]
+
+
+    def chaindx(self, chains, tpr='topol.tpr', **kwargs):
+        """Create an .ndx file using an .tpr file to select chains for affinity
+        calculation.
+        """
+        chainselec = b''.join(chains) + b'q\n'
+        ndx = gmx(
+            ['make_ndx', '-f', tpr],
+            input=chainselec,
+            **kwargs
+        )
+        return ndx
+
+
+    def single_point(self):
+        """Creates single point .tpr files for the complex and subgroups.
+        """
+        for c in flatten(self.chains):
+            gmx([
+                'grompp', '-f', self.spmdp,
+                '-c', 'chain%sout.gro' % c,
+                '-o', 'chain%ssp.tpr' % c,
+                '-maxwarn', '1'
+            ])
+
+
+    def do_minimization(self):
+
+        for cn, c in enumerate(flatten(self.chains)):
+            gmx(
+                [
+                    'editconf', '-f', 'conf.gro',
+                    '-n', 'index.ndx',
+                    '-o', 'chain%s.pdb' % c
+                ],
+                stdout=self.pipe,
+                stderr=self.pipe,
+                input=bytes(str(10+cn), 'utf-8')
+            )
+            minimize(
+                self.flags['pdb2gmx'] + \
+                    [
+                        '-f', 'chain%s.pdb' % c,
+                        '-o', 'chain%s.gro' % c,
+                        '-p', 'chain%s.top' % c,
+                        '-i', 'chain%s.itp' % c
+                    ],
+                self.flags['editconf'] + \
+                        [
+                            '-f', 'chain%s.gro' % c,
+                            '-o', 'chain%s.gro' % c
+                        ],
+                self.flags['grompp'] + \
+                    [
+                        '-c', 'chain%s.gro' % c,
+                        '-p', 'chain%s.top' % c,
+                        '-o', 'chain%s.tpr' % c
+                    ],
+                self.flags['mdrun'] + \
+                    [
+                        '-deffnm', 'chain%s' % c,
+                        '-c', 'chain%sout.gro' % c
+                    ],
+                pipe=self.pipe
+            )
+
+
+    def fullrun(self):
+        """Generate all the data for DataCollector
+        """
+        self.do_mutate()
+        super().do_minimization()
+        super().update_structs()
+        self.do_concoord()
+        super().do_minimization()
+        self.do_minimization()
+        super.single_point()
+        self.single_point()
+        super.lj()
+        self.lj()
+        self.area()
+
 
 class DataCollector:
     """After a fullrun of DataGenerator, the object can be parsed to this class
