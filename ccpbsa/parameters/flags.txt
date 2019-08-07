@@ -1,29 +1,15 @@
-;characters after semicolons are comments
-;encase flags for programs in square brackets
-;empty lines are ignored
 [dist]
 
-  [pdb2gmx]
+[pdb2gmx]
 -ff=oplsaa
 -water=none
 
-
- [editconf] ;This is a comment aswell
+[editconf]
 -bt=cubic
 -d=2
--c ; So is this
+-c
 
-[grompp]
--maxwarn=1
--f=/home/linkai/CC-PBSA/ccpbsa/parameters/min.mdp
-
-[mdrun]
--nt=1
--tablep=/home/linkai/CC-PBSA/ccpbsa/parameters/table4r-6-12.xvg
--table=/home/linkai/CC-PBSA/ccpbsa/parameters/table4r-6-12.xvg
-
- [disco]
+[disco]
 -n=3
 
-[gropbe]
-gropbe.txt
+[mdrun]

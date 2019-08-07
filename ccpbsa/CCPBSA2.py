@@ -565,7 +565,7 @@ class DataGenerator:
                     input=b'0')
 
             else:
-                gmx(sasa, input=b'0')
+                gmx(sasa + ['-s', 'confout.gro'], input=b'0')
 
             os.chdir(self.maindir)
 

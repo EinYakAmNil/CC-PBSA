@@ -23,6 +23,11 @@ def main():
     cliparser = argparse.ArgumentParser(prog='ccpbsa')
     options = cliparser.add_argument_group("OPTIONS")
 
+    cliparser.add_argument(
+        "routine",
+        help="Called during installation to setup default parameters.",
+        choices={'setup', 'stability'}
+    )
     options.add_argument(
         "-w", "--wildtype",
         help=".pdb file of the wildtype protein"
@@ -37,13 +42,6 @@ def main():
         least the number of structures in CONCOORD and the forcefield and water \
         model should be specified in there",
         default=pkgpath+'/parameters/flags.txt'
-    )
-    options.add_argument(
-        "--mode",
-        help="Calculate either the change of stability or affinity changing \
-        effects of mutations.",
-        default='stability',
-        choices={'stability', 'affinity'}
     )
     options.add_argument(
         "--chains",
@@ -62,36 +60,14 @@ def main():
         default=pkgpath+'/parameters/fit_affinity.txt',
     )
     options.add_argument(
-        "--minimization-mdp",
-        default=pkgpath+'/parameters/min.mdp',
-        help=".mdp file for GROMACS energy minimization. Default: Uses lookup \
-        table in \"--dielectric-table\""
-    )
-    options.add_argument(
         "--energy-mdp",
         default=pkgpath+'/parameters/energy.mdp',
         help=".mdp file for GROMACS energy evaluations. Default: epsilon-r = 1"
     )
     options.add_argument(
-        "--dielectric-table",
-        default=pkgpath+'/parameters/table4r-6-12.xvg',
-        help="Look up table for GROMACS to simulate continuum solvent. \
-        Default: epsilon(r) = 4r"
-    )
-    options.add_argument(
-        "--gropbe",
-        default=pkgpath+'/parameters/gropbe.txt',
-        help="Parameters for gropbe. Defaults are the same as in the paper"
-    )
-    options.add_argument(
         "--gxg-table",
         default=pkgpath+'/parameters/GXG.csv',
         help="GXG table used for stability change calculations"
-    )
-    options.add_argument(
-        "--gxg",
-        help="Creates a new gxg.csv for dG calculation of the unfolded state.",
-        action='store_true'
     )
     options.add_argument(
         "-v",
@@ -101,6 +77,17 @@ def main():
 
     cliargs = cliparser.parse_args()
 
+    if cliargs.routine == 'setup':
+        
+        with open(pkgpath+'/parameters/flags.txt', 'a') as paramfile:
+            paramfile.write("-tablep="+pkgpath+'/parameters/table4r-6-12.xvg\n')
+            paramfile.write("-table="+pkgpath+'/parameters/table4r-6-12.xvg\n')
+            paramfile.write("[grompp]\n")
+            paramfile.write("-maxwarn=1")
+            paramfile.write("-f="+pkgpath+'/parameters/table4r-6-12.xvg\n')
+            paramfile.write("[gropbe]\n")
+            paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
+            sys.exit(0)
 #    if cliargs.gxg:
 #        print("Making a new GXG table.")
 #        GXG_ = gxg(
