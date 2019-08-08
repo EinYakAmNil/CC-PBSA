@@ -567,7 +567,9 @@ class AffintyGenerator(DataGenerator):
                     '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
                 ],
                 self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-                self.flags['grompp'] + ['-c', fn+'.gro', '-o', fn+'.tpr'],
+                self.flags['grompp'] + [
+                    '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+                ],
                 self.flags['mdrun'] + ['-deffnm', fn],
                 pipe=self.pipe
             )
@@ -630,9 +632,9 @@ class AffintyGenerator(DataGenerator):
             log(self.grp1+"_lj.log", lj)
 
             gmx([
-                'mdrun', '-s', self.grp1+'_sp.tpr',
-                '-rerun', self.grp1+'.gro',
-                '-deffnm', self.grp1+'_sp',
+                'mdrun', '-s', self.grp2+'_sp.tpr',
+                '-rerun', self.grp2+'.gro',
+                '-deffnm', self.grp2+'_sp',
                 '-nt', '1'
             ])
             lj = gmx(
