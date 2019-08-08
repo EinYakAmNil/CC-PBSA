@@ -444,7 +444,6 @@ class DataGenerator:
         """
         for d in self.wds:
             os.chdir(d)
-
             gmx([
                 'mdrun', '-s', 'sp.tpr',
                 '-rerun', 'confout.gro',
@@ -527,7 +526,7 @@ class AffintyGenerator(DataGenerator):
         self.grp1 = chaingrp
         cmd.load(wtpdb)
         self.chains = cmd.get_chains()
-        self.grp2 = [c for c in cmd.get_chains() if c not in chaingrp]
+        self.grp2 = "".join([c for c in cmd.get_chains() if c not in chaingrp])
         cmd.reinitialize()
         super().__init__(
            wtpdb=wtpdb,
@@ -550,22 +549,10 @@ class AffintyGenerator(DataGenerator):
             cmd.split_chains()
             save1 = ', '.join([pdb+'_'+i for i in self.grp1])
             save2 = ', '.join([pdb+'_'+i for i in self.grp2])
-            cmd.save("".join(self.grp1)+'.pdb', save1)
-            cmd.save("".join(self.grp2)+'.pdb', save2)
+            cmd.save(self.grp1+'.pdb', save1)
+            cmd.save(self.grp2+'.pdb', save2)
             cmd.reinitialize()
             os.chdir(self.maindir)
-
-
-    def single_point(self):
-        """Creates single point .tpr files for the complex and subgroups.
-        """
-        for c in flatten(self.chains):
-            gmx([
-                'grompp', '-f', self.spmdp,
-                '-c', 'chain%sout.gro' % c,
-                '-o', 'chain%ssp.tpr' % c,
-                '-maxwarn', '1'
-            ])
 
 
     def do_minimization(self):
@@ -574,24 +561,106 @@ class AffintyGenerator(DataGenerator):
         """
         for d in self.wds:
             os.chdir(d)
-            fn = "".join(self.grp1) + '.pdb'
+            fn = self.grp1
             minimize(
-                self.flags['pdb2gmx'] + ['-f', fn+'.pdb', '-o', fn+'.gro'],
-                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-                self.flags['grompp'] + ['-c', fn+'.gro', '-o', fn+'.tpr'],
-                self.flags['mdrun'] + ['-deffn', fn],
-                pipe=self.pipe
-            )
-            fn = "".join(self.grp2)
-            minimize(
-                self.flags['pdb2gmx'] + ['-f', fn+'.pdb', '-o', fn+'.gro'],
+                self.flags['pdb2gmx'] + [
+                    '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+                ],
                 self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
                 self.flags['grompp'] + ['-c', fn+'.gro', '-o', fn+'.tpr'],
                 self.flags['mdrun'] + ['-deffnm', fn],
                 pipe=self.pipe
             )
+            fn = self.grp2
+            minimize(
+                self.flags['pdb2gmx'] + [
+                    '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+                ],
+                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
+                self.flags['grompp'] + [
+                    '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+                ],
+                self.flags['mdrun'] + ['-deffnm', fn],
+                pipe=self.pipe
+            )
 
             os.chdir(self.maindir)
+
+
+    def single_point(self):
+        """Creates a single point .tpr file of the single groups.
+        """
+        for d in self.wds:
+            os.chdir(d)
+            gmx([
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp1+'.gro',
+                '-p', self.grp1+'_topol.top',
+                '-o', self.grp1+'_sp.tpr',
+                '-maxwarn', '1'
+            ])
+            gmx([
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp2+'.gro',
+                '-p', self.grp1+'_topol.top',
+                '-o', self.grp1+'_sp.tpr',
+                '-maxwarn', '1'
+            ])
+
+            os.chdir(self.maindir)
+
+    def lj(self):
+        """Calculate the Lennard-Jones Energy based on the sp.tpr of the
+        unbound proteins
+        """
+        for d in self.wds:
+            os.chdir(d)
+            gmx([
+                'mdrun', '-s', self.grp1+'_sp.tpr',
+                '-rerun', self.grp1+'.gro',
+                '-deffnm', self.grp1+'_sp',
+                '-nt', '1'
+            ])
+            lj = gmx(
+                ['energy', '-f', self.grp1+'_sp.edr', '-sum', 'yes'],
+                input=b'5 7',
+                stdout=subprocess.PIPE,
+                stderr=None
+            )
+            log(self.grp1+"_lj.log", lj)
+
+            gmx([
+                'mdrun', '-s', self.grp1+'_sp.tpr',
+                '-rerun', self.grp1+'.gro',
+                '-deffnm', self.grp1+'_sp',
+                '-nt', '1'
+            ])
+            lj = gmx(
+                ['energy', '-f', self.grp2+'_sp.edr', '-sum', 'yes'],
+                input=b'5 7',
+                stdout=subprocess.PIPE,
+                stderr=None
+            )
+            log("".join(self.grp2)+"_lj.log", lj)
+
+            os.chdir(self.maindir)
+
+
+    def area(self):
+        """Calculate the interaction area of the wildtype protein.
+        """
+        sasa = ['sasa', '-s']
+        os.chdir(self.wds[0])
+        gmx(sasa + ['confout.gro'], input=b'0')
+        gmx(
+            sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
+            input=b'0'
+        )
+        gmx(
+            sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
+            input=b'0'
+        )
+        os.chdir(self.maindir)
 
 
     def fullrun(self):
@@ -603,11 +672,11 @@ class AffintyGenerator(DataGenerator):
         super().do_minimization()
         self.split_chains()
         self.do_minimization()
-#        super.single_point()
-#        self.single_point()
-#        super.lj()
-#        self.lj()
-#        self.area()
+        super().single_point()
+        self.single_point()
+        super().lj()
+        self.lj()
+        self.area()
 
 
 class DataCollector:
@@ -939,7 +1008,7 @@ if __name__ == '__main__':
         wtpdb="1cho.pdb",
         mutlist='mut.txt',
         flags='/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
-        chaingrp=['E', 'F', 'G'],
+        chaingrp="EFG",
         spmdp='parameters/energy.mdp',
         verbosity=1
     )
