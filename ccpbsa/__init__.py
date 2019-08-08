@@ -137,9 +137,11 @@ def main():
 
         ddG = search.ddstability()
         print("ddG values:")
+        print("without fit:")
         print(search.ddG)
         search.ddG.to_csv("ddG.csv")
         ddG_fit = search.fitstability(**parameters)
+        print("with fit:")
         print(ddG_fit)
         search.ddG.to_csv("ddG_fit.csv")
 

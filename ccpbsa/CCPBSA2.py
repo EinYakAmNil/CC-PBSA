@@ -30,7 +30,6 @@ def int_in_str(*strings):
     converted = [''.join([item for item in str_ if item.isdigit()]) \
         for str_ in strings]
     return converted
-#    return list(map(int, converted))
 
 
 def flatten(lst=[]):
@@ -194,13 +193,27 @@ def minimize(
  
 
 def gro2pdb(gro, tpr, pdb, pipe):
+    """Replace the original .pdb file by a .gro file. Preserves chains.
+    Requires the originial .pdb file to still be there.
+    """
+    cmd.load(pdb)
+    ori = cmd.get_chains()
+    cmd.reinitialize()
     trjconv = gmx(
         ['trjconv', '-f', gro, '-s', tpr, '-o', pdb],
         input=b'0',
         stdout=pipe,
         stderr=pipe
     )
-    
+    cmd.load(pdb)
+    replace = cmd.get_chains()
+
+    for n, c in enumerate(ori):
+        cmd.alter('chain %s' % replace[n], 'chain="%s"' % c)
+
+    cmd.save(pdb)
+    cmd.reinitialize()
+
     return trjconv
 
 
@@ -250,7 +263,8 @@ class DataGenerator:
             raise ValueError
 
         self.wtpdb = os.getcwd() + "/" + wtpdb
-        self.wt = wtpdb[:wtpdb.find(".pdb")]
+        wtname = wtpdb.split('/')[-1]
+        self.wt = wtname[:wtname.find(".pdb")]
         self.flags = parse_flags(flags)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.mut_df = parse_mutations(mutlist)
@@ -358,7 +372,7 @@ class DataGenerator:
             minimize(
                 self.flags['pdb2gmx'] + ['-f', pdb],
                 self.flags['editconf'],
-                self.flags['grompp'],
+                self.flags['grompp'] + ['-c', 'out.gro'],
                 self.flags['mdrun'],
                 pipe=self.pipe
             )
@@ -506,10 +520,15 @@ class AffintyGenerator(DataGenerator):
         wtpdb,
         mutlist,
         flags,
-        chains,
+        chaingrp,
         spmdp,
         verbosity=0
     ):
+        self.grp1 = chaingrp
+        cmd.load(wtpdb)
+        self.chains = cmd.get_chains()
+        self.grp2 = [c for c in cmd.get_chains() if c not in chaingrp]
+        cmd.reinitialize()
         super().__init__(
            wtpdb=wtpdb,
            mutlist=mutlist,
@@ -517,22 +536,24 @@ class AffintyGenerator(DataGenerator):
            spmdp=spmdp,
            verbosity=verbosity
         )
-        self.prot1 = chains
-        cmd.load(wtpdb)
-        self.prot2 = [c for c in cmd.get_chains() if c not in self.prot1]
 
 
-    def chaindx(self, chains, tpr='topol.tpr', **kwargs):
-        """Create an .ndx file using an .tpr file to select chains for affinity
-        calculation.
+    def split_chains(self):
+        """Split the .pdb file into two new .pdb files as specified in the
+        chaingrp argument. only one group needs to be specified. The leftover
+        chains automatically form the second group.
         """
-        chainselec = b''.join(chains) + b'q\n'
-        ndx = gmx(
-            ['make_ndx', '-f', tpr],
-            input=chainselec,
-            **kwargs
-        )
-        return ndx
+        for d in self.wds:
+            os.chdir(d)
+            pdb = d.split('/')[-1]
+            cmd.load(pdb+'.pdb')
+            cmd.split_chains()
+            save1 = ', '.join([pdb+'_'+i for i in self.grp1])
+            save2 = ', '.join([pdb+'_'+i for i in self.grp2])
+            cmd.save("".join(self.grp1)+'.pdb', save1)
+            cmd.save("".join(self.grp2)+'.pdb', save2)
+            cmd.reinitialize()
+            os.chdir(self.maindir)
 
 
     def single_point(self):
@@ -548,60 +569,45 @@ class AffintyGenerator(DataGenerator):
 
 
     def do_minimization(self):
-
-        for cn, c in enumerate(flatten(self.chains)):
-            gmx(
-                [
-                    'editconf', '-f', 'conf.gro',
-                    '-n', 'index.ndx',
-                    '-o', 'chain%s.pdb' % c
-                ],
-                stdout=self.pipe,
-                stderr=self.pipe,
-                input=bytes(str(10+cn), 'utf-8')
-            )
+        """Go into all the directories and minimize the .pdb files of the
+        unbounded proteins instead.
+        """
+        for d in self.wds:
+            os.chdir(d)
+            fn = "".join(self.grp1) + '.pdb'
             minimize(
-                self.flags['pdb2gmx'] + \
-                    [
-                        '-f', 'chain%s.pdb' % c,
-                        '-o', 'chain%s.gro' % c,
-                        '-p', 'chain%s.top' % c,
-                        '-i', 'chain%s.itp' % c
-                    ],
-                self.flags['editconf'] + \
-                        [
-                            '-f', 'chain%s.gro' % c,
-                            '-o', 'chain%s.gro' % c
-                        ],
-                self.flags['grompp'] + \
-                    [
-                        '-c', 'chain%s.gro' % c,
-                        '-p', 'chain%s.top' % c,
-                        '-o', 'chain%s.tpr' % c
-                    ],
-                self.flags['mdrun'] + \
-                    [
-                        '-deffnm', 'chain%s' % c,
-                        '-c', 'chain%sout.gro' % c
-                    ],
+                self.flags['pdb2gmx'] + ['-f', fn+'.pdb', '-o', fn+'.gro'],
+                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
+                self.flags['grompp'] + ['-c', fn+'.gro', '-o', fn+'.tpr'],
+                self.flags['mdrun'] + ['-deffn', fn],
                 pipe=self.pipe
             )
+            fn = "".join(self.grp2)
+            minimize(
+                self.flags['pdb2gmx'] + ['-f', fn+'.pdb', '-o', fn+'.gro'],
+                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
+                self.flags['grompp'] + ['-c', fn+'.gro', '-o', fn+'.tpr'],
+                self.flags['mdrun'] + ['-deffnm', fn],
+                pipe=self.pipe
+            )
+
+            os.chdir(self.maindir)
 
 
     def fullrun(self):
         """Generate all the data for DataCollector
         """
-        self.do_mutate()
         super().do_minimization()
         super().update_structs()
         self.do_concoord()
         super().do_minimization()
+        self.split_chains()
         self.do_minimization()
-        super.single_point()
-        self.single_point()
-        super.lj()
-        self.lj()
-        self.area()
+#        super.single_point()
+#        self.single_point()
+#        super.lj()
+#        self.lj()
+#        self.area()
 
 
 class DataCollector:
@@ -926,3 +932,15 @@ class DataCollector:
                 self.ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c +self.ddG['PKA'][i]
 
         self.ddG.to_csv("ddG.csv")
+
+
+if __name__ == '__main__':
+    x = AffintyGenerator(
+        wtpdb="1cho.pdb",
+        mutlist='mut.txt',
+        flags='/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
+        chaingrp=['E', 'F', 'G'],
+        spmdp='parameters/energy.mdp',
+        verbosity=1
+    )
+    x.fullrun()
