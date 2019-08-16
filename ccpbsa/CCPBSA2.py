@@ -8,6 +8,53 @@ import pymol
 pymol.finish_launching(['pymol', '-qc'])
 cmd = pymol.cmd
 
+def get_lj(files):
+    """Get the tail of a list of log files to extract the mean value of the
+    Lennard-Jones Energy.
+    """
+    tail = "tail -q -n 1 ".split()
+    lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    unparsed = lj.stdout.decode('utf-8').split('\n')
+    parsed = [float(i.split()[1]) for i in unparsed if len(i) > 0]
+
+    return np.array(parsed).mean()
+
+
+def get_coul(files):
+    """Get the tail of a list of log files to extract the mean value of the
+    Coulomb Energy.
+    """
+    tail = "tail -q -n 5".split()
+    coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    unparsed = coul.stdout.decode('utf-8').split('\n')
+    coul = [i for i in unparsed if 'Coulombic energy' in i]
+    parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
+
+    return np.array(parsed).mean()
+
+
+def get_solv(files):
+    """Get the tail of a list of log files to extract the mean value of the
+    Solvation Energy.
+    """
+    tail = "tail -q -n 3".split()
+    solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    unparsed = coul.stdout.decode('utf-8').split('\n')
+    solv = [i for i in unparsed if 'Solvation Energy' in i]
+    parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+
+    return np.array(parsed).mean()
+
+
+def get_area(files):
+    tail = "tail -q -n 1".split()
+    areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    unparsed = areas.stdout.decode('utf-8').split('\n')
+    parsed = [float(i.split()[1]) for i in unparsed if len(i) > 0]
+
+    return np.array(parsed).mean()
+
+
 def log(fname, proc_obj):
     """Write stdout and stderr of a process object to a file.
     """
@@ -262,6 +309,7 @@ class DataGenerator:
         else:
             raise ValueError
 
+
         self.wtpdb = os.getcwd() + "/" + wtpdb
         wtname = wtpdb.split('/')[-1]
         self.wt = wtname[:wtname.find(".pdb")]
@@ -271,6 +319,10 @@ class DataGenerator:
         self.wds = [self.wt]
         self.wds.extend(["+".join([j for j in i if len(j) > 0]) \
             for i in self.mut_df.index])
+
+        cmd.load(self.wtpdb)
+        self.chains = cmd.get_chains()
+        cmd.reinitialize()
 
 #        Create the directory for data generation.
         try:
@@ -340,44 +392,33 @@ class DataGenerator:
             cmd.reinitialize()
 
 
-    def do_concoord(self):
+    def do_concoord(self, d):
         """Goes into the directories listed in self.wds and generates
         structure ensembles using CONCOORD. Each generated structure has its on
         directory one level down the directoy tree. Updates self.wds with the
         new structures
         """
-        for d in self.wds:
-            os.chdir(d)
-            pdb = d.split("/")[-1] + ".pdb"
-            concoord(self.pipe, pdb, **self.flags, input=b'2\n1')
+        pdb = d.split("/")[-1] + ".pdb"
+        concoord(self.pipe, pdb, **self.flags, input=b'2\n1')
 
-            for i in range(1, len(self)+1):
-                os.mkdir(str(i))
-                shutil.move(str(i) + '.pdb', str(i))
-
-            os.chdir(self.maindir)
-
-        self.wds = [d+'/'+str(i) for d in self.wds \
-                for i in range(1, len(self)+1)]
+        for i in range(1, len(self)+1):
+            os.mkdir(str(i))
+            shutil.move(str(i) + '.pdb', str(i))
 
 
-    def do_minimization(self):
+    def do_minimization(self, d):
         """Do energy minimization on the structures in self.wds. If the
         affinity is to be calculated, then an index file for the chains will be
         made and the chains specified in self.chains are minimized.
         """
-        for d in self.wds:
-            os.chdir(d)
-            pdb = d.split("/")[-1] + ".pdb"
-            minimize(
-                self.flags['pdb2gmx'] + ['-f', pdb],
-                self.flags['editconf'],
-                self.flags['grompp'] + ['-c', 'out.gro'],
-                self.flags['mdrun'],
-                pipe=self.pipe
-            )
-
-            os.chdir(self.maindir)
+        pdb = d.split("/")[-1] + ".pdb"
+        minimize(
+            self.flags['pdb2gmx'] + ['-f', pdb],
+            self.flags['editconf'],
+            self.flags['grompp'] + ['-c', 'out.gro'],
+            self.flags['mdrun'],
+            pipe=self.pipe
+        )
 
 
     def update_structs(self):
@@ -399,66 +440,54 @@ class DataGenerator:
     def single_point(self):
         """Creates a single point .tpr file.
         """
-        for d in self.wds:
-            os.chdir(d)
-            gmx([
-                'grompp', '-f', self.spmdp,
-                '-c', 'confout.gro',
-                '-o', 'sp.tpr',
-                '-maxwarn', '1'
-            ])
-
-            os.chdir(self.maindir)
+        gmx([
+            'grompp', '-f', self.spmdp,
+            '-c', 'confout.gro',
+            '-o', 'sp.tpr',
+            '-maxwarn', '1'
+        ])
 
 
-    def electrostatics(self, tpr="sp"):
+    def electrostatics(self):
         """Calculate the Coulomb and Solvation Energies of structures of the
         specified .tpr file prefix in the directories. By default the file
         should be named sp (Single Point).
         Parameters for this are stored in a separate file for gropbe. Reference
         it through the main parameter file for CC/PBSA.
         """
-        chainselec = ",".join(str(i) for i in range(len(flatten(self.chains))))
+        chainselec = ",".join(str(i) for i in range(len(self.chains)))
 
-        for d in self.wds:
-            os.chdir(d)
-            shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
 
-            with open('gropbe.prm', 'a') as params:
-                params.write("in(tpr,sp.tpr)")
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,sp.tpr)")
 
-            gropbe = subprocess.run(
-                ["gropbe", 'gropbe.prm'],
-                input=bytes(chainselec, 'utf-8'),
-                stdout=subprocess.PIPE,
-                stderr=self.pipe
-            )
-            gropbe.stderr = None
-            log("solvation.log", gropbe)
-
-            os.chdir(self.maindir)
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe
+        )
+        gropbe.stderr = None
+        log("solvation.log", gropbe)
 
 
     def lj(self):
         """Calculate the Lennard-Jones Energy based on a sp.tpr
         """
-        for d in self.wds:
-            os.chdir(d)
-            gmx([
-                'mdrun', '-s', 'sp.tpr',
-                '-rerun', 'confout.gro',
-                '-deffnm', 'sp',
-                '-nt', '1'
-            ])
-            lj = gmx(
-                ['energy', '-f', 'sp.edr', '-sum', 'yes'],
-                input=b'5 7',
-                stdout=subprocess.PIPE,
-                stderr=None
-            )
-            log("lj.log", lj)
-
-            os.chdir(self.maindir)
+        gmx([
+            'mdrun', '-s', 'sp.tpr',
+            '-rerun', 'confout.gro',
+            '-deffnm', 'sp',
+            '-nt', '1'
+        ])
+        lj = gmx(
+            ['energy', '-f', 'sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=None
+        )
+        log("lj.log", lj)
 
 
     def area(self):
@@ -467,50 +496,62 @@ class DataGenerator:
         ensemble will be used and the values for the interaction surface will
         be written into the .xvg file
         """
-        for d in self.wds:
-            os.chdir(d)
-            gmx(['sasa', '-s', 'confout.gro'], input=b'0')
-            os.chdir(self.maindir)
+        gmx(['sasa', '-s', 'confout.gro'], input=b'0')
 
 
-    def schlitter(self):
+    def schlitter(self, en):
         """Calculates an upper limit of the entropy according to Schlitter's
         formula. Used in .fullrun() if the mode is stability
         """
         trjcat = ['trjcat', '-cat', 'yes', '-f']
         covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
         anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
-        ensembles = [i.split('/')[-2] for i in self.wds]
-        ensembles = list(dict.fromkeys(ensembles))
 
-        for en in ensembles:
-            os.chdir(en)
-            trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
-                for n in range(len(self))]
+        trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
+            for n in range(len(self))]
 
-            gmx(trjcat+trrs)
-            gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'0')
-            entropy = gmx(anaeig, stdout=subprocess.PIPE)
-            log('entropy.log', entropy)
-
-            os.chdir(self.maindir)
+        gmx(trjcat+trrs)
+        gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'0')
+        entropy = gmx(anaeig, stdout=subprocess.PIPE)
+        log('entropy.log', entropy)
 
 
     def fullrun(self):
         """Use all of the default behaviour to generate the data.
         """
-        self.do_minimization()
+        for d in self.wds:
+            os.chdir(d)
+            self.do_minimization(d)
+            os.chdir(self.maindir)
+
         self.update_structs()
-        self.do_concoord()
-        self.do_minimization()
-        self.single_point()
-        self.electrostatics()
-        self.lj()
-        self.area()
-        self.schlitter()
+
+        for d in self.wds:
+            os.chdir(d)
+            self.do_concoord(d)
+            os.chdir(self.maindir)
+
+        self.wds = [d+'/'+str(i) for d in self.wds \
+                for i in range(1, len(self)+1)]
+
+        for d in self.wds:
+            os.chdir(d)
+            self.do_minimization(d)
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            self.area()
+            os.chdir(self.maindir)
+
+        ensembles = [i.split('/')[-2] for i in self.wds]
+        ensembles = list(dict.fromkeys(ensembles))
+        for en in ensembles:
+            os.chdir(en)
+            self.schlitter(en)
+            os.chdir(self.maindir)
 
 
-class AffintyGenerator(DataGenerator):
+class AffinityGenerator(DataGenerator):
     """Subclassed from DataGenerator to add additional procedures to calculate
     the affinity changes in mutated proteins
     """
@@ -537,115 +578,140 @@ class AffintyGenerator(DataGenerator):
         )
 
 
-    def split_chains(self):
+    def split_chains(self, d):
         """Split the .pdb file into two new .pdb files as specified in the
         chaingrp argument. only one group needs to be specified. The leftover
         chains automatically form the second group.
         """
-        for d in self.wds:
-            os.chdir(d)
-            pdb = d.split('/')[-1]
-            cmd.load(pdb+'.pdb')
-            cmd.split_chains()
-            save1 = ', '.join([pdb+'_'+i for i in self.grp1])
-            save2 = ', '.join([pdb+'_'+i for i in self.grp2])
-            cmd.save(self.grp1+'.pdb', save1)
-            cmd.save(self.grp2+'.pdb', save2)
-            cmd.reinitialize()
-            os.chdir(self.maindir)
+        pdb = d.split('/')[-1]
+        cmd.load(pdb+'.pdb')
+        cmd.split_chains()
+        save1 = ', '.join([pdb+'_'+i for i in self.grp1])
+        save2 = ', '.join([pdb+'_'+i for i in self.grp2])
+        cmd.save(self.grp1+'.pdb', save1)
+        cmd.save(self.grp2+'.pdb', save2)
+        cmd.reinitialize()
 
 
     def do_minimization(self):
         """Go into all the directories and minimize the .pdb files of the
         unbounded proteins instead.
         """
-        for d in self.wds:
-            os.chdir(d)
-            fn = self.grp1
-            minimize(
-                self.flags['pdb2gmx'] + [
-                    '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
-                ],
-                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-                self.flags['grompp'] + [
-                    '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
-                ],
-                self.flags['mdrun'] + ['-deffnm', fn],
-                pipe=self.pipe
-            )
-            fn = self.grp2
-            minimize(
-                self.flags['pdb2gmx'] + [
-                    '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
-                ],
-                self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-                self.flags['grompp'] + [
-                    '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
-                ],
-                self.flags['mdrun'] + ['-deffnm', fn],
-                pipe=self.pipe
-            )
-
-            os.chdir(self.maindir)
+        fn = self.grp1
+        minimize(
+            self.flags['pdb2gmx'] + [
+                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+            ],
+            self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
+            self.flags['grompp'] + [
+                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+            ],
+            self.flags['mdrun'] + ['-deffnm', fn],
+            pipe=self.pipe
+        )
+        fn = self.grp2
+        minimize(
+            self.flags['pdb2gmx'] + [
+                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+            ],
+            self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
+            self.flags['grompp'] + [
+                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+            ],
+            self.flags['mdrun'] + ['-deffnm', fn],
+            pipe=self.pipe
+        )
 
 
     def single_point(self):
         """Creates a single point .tpr file of the single groups.
         """
-        for d in self.wds:
-            os.chdir(d)
-            gmx([
-                'grompp', '-f', self.spmdp,
-                '-c', self.grp1+'.gro',
-                '-p', self.grp1+'_topol.top',
-                '-o', self.grp1+'_sp.tpr',
-                '-maxwarn', '1'
-            ])
-            gmx([
-                'grompp', '-f', self.spmdp,
-                '-c', self.grp2+'.gro',
-                '-p', self.grp1+'_topol.top',
-                '-o', self.grp1+'_sp.tpr',
-                '-maxwarn', '1'
-            ])
+        gmx([
+            'grompp', '-f', self.spmdp,
+            '-c', self.grp1+'.gro',
+            '-p', self.grp1+'_topol.top',
+            '-o', self.grp1+'_sp.tpr',
+            '-maxwarn', '1'
+        ])
+        gmx([
+            'grompp', '-f', self.spmdp,
+            '-c', self.grp2+'.gro',
+            '-p', self.grp2+'_topol.top',
+            '-o', self.grp2+'_sp.tpr',
+            '-maxwarn', '1'
+        ])
 
-            os.chdir(self.maindir)
+
+    def electrostatics(self):
+        """Calcutlate the Coulomb and Solvation Energy based on the single
+        point .tpr files of the chain groups. Parameters are stored in a
+        separate file for gropbe. Reference it through the main parameter file
+        for CC/PBSA.
+        """
+        chainselec = ",".join(str(i) for i in range(len(self.grp1)))
+
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,%s_sp.tpr)" % self.grp1)
+
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe
+        )
+        gropbe.stderr = None
+        log("%s_solvation.log" % self.grp1, gropbe)
+        
+        chainselec = ",".join(str(i) for i in range(len(self.grp2)))
+
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,%s_sp.tpr)" % self.grp2)
+
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe
+        )
+        gropbe.stderr = None
+        log("%s_solvation.log" % self.grp2, gropbe)
+
 
     def lj(self):
         """Calculate the Lennard-Jones Energy based on the sp.tpr of the
         unbound proteins
         """
-        for d in self.wds:
-            os.chdir(d)
-            gmx([
-                'mdrun', '-s', self.grp1+'_sp.tpr',
-                '-rerun', self.grp1+'.gro',
-                '-deffnm', self.grp1+'_sp',
-                '-nt', '1'
-            ])
-            lj = gmx(
-                ['energy', '-f', self.grp1+'_sp.edr', '-sum', 'yes'],
-                input=b'5 7',
-                stdout=subprocess.PIPE,
-                stderr=None
-            )
-            log(self.grp1+"_lj.log", lj)
+        gmx([
+            'mdrun', '-s', self.grp1+'_sp.tpr',
+            '-rerun', self.grp1+'.gro',
+            '-deffnm', self.grp1+'_sp',
+            '-nt', '1'
+        ])
+        lj = gmx(
+            ['energy', '-f', self.grp1+'_sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=None
+        )
+        log(self.grp1+"_lj.log", lj)
 
-            gmx([
-                'mdrun', '-s', self.grp2+'_sp.tpr',
-                '-rerun', self.grp2+'.gro',
-                '-deffnm', self.grp2+'_sp',
-                '-nt', '1'
-            ])
-            lj = gmx(
-                ['energy', '-f', self.grp2+'_sp.edr', '-sum', 'yes'],
-                input=b'5 7',
-                stdout=subprocess.PIPE,
-                stderr=None
-            )
-            log("".join(self.grp2)+"_lj.log", lj)
-
-            os.chdir(self.maindir)
+        gmx([
+            'mdrun', '-s', self.grp2+'_sp.tpr',
+            '-rerun', self.grp2+'.gro',
+            '-deffnm', self.grp2+'_sp',
+            '-nt', '1'
+        ])
+        lj = gmx(
+            ['energy', '-f', self.grp2+'_sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=None
+        )
+        log("".join(self.grp2)+"_lj.log", lj)
 
 
     def area(self):
@@ -668,16 +734,38 @@ class AffintyGenerator(DataGenerator):
     def fullrun(self):
         """Generate all the data for DataCollector
         """
-        super().do_minimization()
+        for d in self.wds:
+            os.chdir(d)
+            super().do_minimization(d)
+            os.chdir(self.maindir)
+        
         super().update_structs()
-        self.do_concoord()
-        super().do_minimization()
-        self.split_chains()
-        self.do_minimization()
-        super().single_point()
-        self.single_point()
-        super().lj()
-        self.lj()
+
+        for d in self.wds:
+            os.chdir(d)
+            self.do_concoord(d)
+            os.chdir(self.maindir)
+
+        self.wds = [d+'/'+str(i) for d in self.wds \
+                for i in range(1, len(self)+1)]
+
+        for d in self.wds:
+            os.chdir(d)
+            super().do_minimization(d)
+            super().single_point()
+            super().electrostatics()
+            super().lj()
+            os.chdir(self.maindir)
+
+        for d in self.wds:
+            os.chdir(d)
+            self.split_chains(d)
+            self.do_minimization()
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            os.chdir(self.maindir)
+        
         self.area()
 
 
@@ -711,24 +799,15 @@ class DataCollector:
                 if len(mut) > 0:
                     self.mut_df["Mutation"][i][j] = self.aa321[mut]
 
-        self.mode = data_obj.calculate
-
-        if self.mode == 'stability':
-            self.G = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=next(os.walk('.'))[1]
-            )
-            self.dG = self.G.drop(self.wt)
-            self.ddG = pd.DataFrame(0.0,
-                columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.dG.index
-            )
-
-        else:
-            self.G = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
-                index=next(os.walk('.'))[1]
-            )
+        self.G = pd.DataFrame(0.0, 
+            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=next(os.walk('.'))[1]
+        )
+        self.dG = self.G.drop(self.wt)
+        self.ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            index=self.dG.index
+        )
 
 
     def __len__(self):
@@ -741,23 +820,12 @@ class DataCollector:
         """Find the files in which the Lennard-Jones energies are supposed to
         be written in and save the parsed values in self.G.
         """
-        tail = "tail -q -n 1 ".split()
         for d in self.G.index:
             os.chdir(d)
+            
             files = glob.glob("*/lj.log")
-            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [float(i.split()[1]) for i in \
-                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+            self.G['LJ'][d] = get_lj(files)
 
-            if self.mode == 'affinity':
-                files = glob.glob("*/chain_*_lj.log")
-                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'kJ/mol' in i]
-                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.G -= np.array(parsed).sum()
-
-            self.G['LJ'][d] = np.array(parsed).mean()
             os.chdir(self.maindir)
 
 
@@ -788,19 +856,7 @@ class DataCollector:
         for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
-            coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
-                if 'Coulombic energy' in i]
-            parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
-            self.G['COUL'][d] = np.array(parsed).mean()
-
-            if self.mode == 'affinity':
-                files = glob.glob("*/solvation_*.log")
-                coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
-                    if 'Coulombic energy' in i]
-                parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
-                self.G -= np.array(parsed).sum()
+            self.G['COUL'][d] = get_coul(files)
 
             os.chdir(self.maindir)
         
@@ -814,20 +870,7 @@ class DataCollector:
         tail = "tail -q -n 3".split()
         for d in self.G.index:
             os.chdir(d)
-            files = glob.glob("*/solvation.log")
-            solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                if 'Solvation Energy' in i]
-            parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-            self.G['SOLV'][d] = np.array(parsed).mean()
-
-            if self.mode == 'affinity':
-                files = glob.glob("*/solvation_*.log")
-                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'Solvation Energy' in i]
-                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.G -= np.array(parsed).sum()
+            self.G['SOLV'][d] = get_solv(files)
 
             os.chdir(self.maindir)
 
@@ -837,27 +880,10 @@ class DataCollector:
         potential are supposed to be written in and save the parsed values in
         G.
         """
-        tail = "tail -q -n 1 ".split()
-
-        if self.mode == 'stability':
-
-            for d in self.G.index:
-                os.chdir(d)
-                files = glob.glob("*/area.xvg")
-                areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                parsed = [float(i.split()[1]) for i in \
-                    areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-                self.G['SAS'][d] = np.array(parsed).mean()
-                os.chdir(self.maindir)
-
-        if self.mode == 'affinity':
-            os.chdir(self.G.index[0])
+        for d in self.G.index:
+            os.chdir(d)
             files = glob.glob("*/area.xvg")
-            areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [i.split()[1:] for i in \
-                areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-            parsed = [(float(i[1])+float(i[2])-float(i[0])) for i in parsed]
-            self.G['PPIS'] = np.array(parsed).mean()
+            self.G['SAS'][d] = get_area(files)
             os.chdir(self.maindir)
 
 
@@ -879,25 +905,16 @@ class DataCollector:
 
 
     def search_data(self):
-        """Uses all the previous searching methods to create a .csv file of the
-        DataFrame object.
+        """Use all of the searching methods to fill out the energy table.
+        Returns the DataFrame object.
         """
-        if self.mode == 'stability':
-            self.search_lj()
-            self.search_coulomb()
-            self.search_solvation()
-            self.search_area()
-            self.search_entropy()
+        self.search_lj()
+        self.search_coulomb()
+        self.search_solvation()
+        self.search_area()
+        self.search_entropy()
 
-            return self.G
-
-        if self.mode == 'affinity':
-            self.search_lj()
-            self.search_coulomb()
-            self.search_solvation()
-            self.search_area()
-
-            return self.G
+        return self.G
 
 
     def dstability(self, gxg_table):
@@ -931,27 +948,8 @@ class DataCollector:
         return self.dG, self.dG_unfld
 
 
-    def daffinity(self, gxg_table):
-        """Calculate the free energy difference between folded and unfolded
-        state based on the energy table passed. ddstability operates
-        independent of this function. This is just used for additional info.
-        """
-        gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
-        for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
-
-            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
-
-            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
-
-        self.dG.to_csv("dG.csv")
-
-
     def ddstability(self):
-        """Calculate the folding free energy difference. For the stability
+        """Calculate the folding free energy difference. For this stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
         """
@@ -967,7 +965,7 @@ class DataCollector:
         return self.ddG
 
     def fitstability(self, alpha, beta, gamma, tau):
-        """Multiply the of each energy contribution by a certain value.
+        """Multiply the column of each energy contribution by a certain value.
         """
         self.ddG["SOLV"] *= alpha
         self.ddG["COUL"] *= alpha
@@ -981,37 +979,181 @@ class DataCollector:
         return self.ddG
 
 
-    def ddaffinity(self, alpha, beta, gamma, c, pka):
-        """Calculate the change in affinity
+class AffinityCollector:
+    """After a fullrun of AffinityCollector, the object can be passed to this
+    constructor to extract the energy values from the directory. A full search
+    produces .csv files with values for the bounded and unbounded states for
+    wildtype and mutations, aswell as the ddG values.
+    """
+    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+    aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
+    aa123 = dict(zip(aa1,aa3))
+    aa321 = dict(zip(aa3,aa1))
+
+    def __init__(self, data_obj):
+        """Pass a AffinityGenerator object to initialize.
         """
-        self.ddG = pd.DataFrame(0.0,
-            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=self.G.index[1:]
+        self.maindir = data_obj.maindir
+        os.chdir(self.maindir)
+
+        self.n = len(data_obj)
+        self.mut_df = data_obj.mut_df
+        self.wt = data_obj.wt
+        self.grp1 = data_obj.grp1
+        self.grp2 = data_obj.grp2
+
+        for i, k in enumerate(self.mut_df["Mutation"].index):
+
+            for j, l in enumerate(k):
+                mut = self.mut_df["Mutation"][i][j]
+
+                if len(mut) > 0:
+                    self.mut_df["Mutation"][i][j] = self.aa321[mut]
+
+        self.G_bound = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ'],
+            index=next(os.walk('.'))[1]
         )
+        self.G_grp1 = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ'],
+            index=self.G_bound.index
+        )
+        self.G_grp2 = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ'],
+            index=self.G_bound.index
+        )
+        self.dG_bound = self.G_bound.drop(self.wt)
+        self.dG_unbound = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ'],
+            index=self.dG_bound.index
+        )
+        self.ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
+            index=self.dG_bound.index
+        )
+
+    def __len__(self):
+        return self.n
+
+    def search_lj(self):
+        """Find the files in which the Lennard-Jones energies are supposed to
+        be written in and save the parsed values in the respective self.G table.
+        """
+        for d in self.G_bound.index:
+            os.chdir(d)
+
+            files = glob.glob("*/lj.log")
+            self.G_bound['LJ'][d] = get_lj(files)
+
+            files = glob.glob("*/%s_lj.log" % self.grp1)
+            self.G_grp1['LJ'][d] = get_lj(files)
+
+            files = glob.glob("*/%s_lj.log" % self.grp2)
+            self.G_grp2['LJ'][d] = get_lj(files)
+
+            os.chdir(self.maindir)
+
+    def search_coulomb(self):
+        """Find the files in which the Coulomb energies are supposed to be
+        written in and save the parsed values in the respective self.G table.
+        """
+        for d in self.G_bound.index:
+            os.chdir(d)
+            files = glob.glob("*/solvation.log")
+            self.G_bound['COUL'][d] = get_coul(files)
+
+            files = glob.glob("*/%s_solvation.log" % self.grp2)
+            self.G_grp1['COUL'][d] = get_coul(files)
+
+            files = glob.glob("*/%s_solvation.log" % self.grp2)
+            self.G_grp2['COUL'][d] = get_coul(files)
+
+            os.chdir(self.maindir)
+
+
+    def search_solvation(self):
+        """Find the files in which the Solvation energies are supposed to be
+        written in and save the parsed values in the respective self.G table.
+        """
+        for d in self.G_bound.index:
+            os.chdir(d)
+            files = glob.glob("*/solvation.log")
+            self.G_bound['SOLV'][d] = get_coul(files)
+
+            files = glob.glob("*/%s_solvation.log" % self.grp2)
+            self.G_grp1['SOLV'][d] = get_coul(files)
+
+            files = glob.glob("*/%s_solvation.log" % self.grp2)
+            self.G_grp2['SOLV'][d] = get_coul(files)
+
+            os.chdir(self.maindir)
+
+
+    def search_area(self):
+        """Get the protein-protein interaction surface (PPIS) of the wildtype
+        and store it in the ddG table since mutant values are not required.
+        """
+        os.chdir(self.wt)
+        cmplx = glob.glob("*/area.xvg")
+        grp1 = glob.glob("*/%s_area.xvg" % self.grp1)
+        grp2 = glob.glob("*/%s_area.xvg" % self.grp2)
+
+        cmplx = get_area(cmplx)
+        grp1 = get_area(grp1)
+        grp2 = get_area(grp2)
+
+        self.ddG['PPIS'] = grp1 + grp2 - cmplx
         
+        os.chdir(self.maindir)
+
+
+    def search_data(self):
+        """Use all of the searching methods to fill out the energy table.
+        Returns the DataFrame object.
+        """
+        self.search_lj()
+        self.search_coulomb()
+        self.search_solvation()
+        self.search_area()
+
+        return self.G_bound, self.G_grp1, self.G_grp2
+
+
+    def daffinity(self):
+        """Calculate the dG tables for the (un-)bounded state for the mutations
+        by subtracting the wildtype values from it.
+        """
+        for c in self.dG_bound.columns:
+
+            for i in self.mut_df.index:
+                self.dG_bound.loc[i, c] = \
+                    self.G_bound.loc[i, c] - self.G_bound.loc[self.wt, c]
+        
+                self.dG_unbound.loc[i, c] = \
+                    (self.G_grp1.loc[i, c] - self.G_grp1.loc[self.wt, c]) + \
+                    (self.G_grp2.loc[i, c] - self.G_grp2.loc[self.wt, c])
+
+
+    def ddaffinity(self):
+        """Calculate the binding free energy difference
+        """
+        for c in self.dG_bound.columns:
+
+            for i in self.dG_unbound.index:
+                self.ddG[c][i] = self.dG_bound[c][i] - self.dG_unbound[c][i]
+
+    
+    def fitaffinity(self, alpha, beta, gamma, c, pka=0):
+        """Multiply the column of each energy contribution by a certain value.
+        Add constants to values as in the paper.
+        """
+        self.ddG["SOLV"] *= alpha
+        self.ddG["COUL"] *= alpha
+        self.ddG["LJ"] *= beta
+        self.ddG["PPIS"] = gamma*self.ddG["PPIS"] + c
+        self.ddG["PKA"] = pka
+
         for i in self.ddG.index:
-            self.ddG['SOLV'][i] = alpha * \
-                 (self.G['SOLV'][i] - self.G['SOLV'][0])
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
 
-            self.ddG['COUL'][i] = alpha * \
-                 (self.G['COUL'][i] - self.G['COUL'][0])
-
-            self.ddG['LJ'][i] = beta * \
-                 (self.G['LJ'][i] - self.G['LJ'][0])
-
-            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
-                self.ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c +self.ddG['PKA'][i]
-
-        self.ddG.to_csv("ddG.csv")
-
-
-if __name__ == '__main__':
-    x = AffintyGenerator(
-        wtpdb="1cho.pdb",
-        mutlist='mut.txt',
-        flags='/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
-        chaingrp="EFG",
-        spmdp='parameters/energy.mdp',
-        verbosity=1
-    )
-    x.fullrun()
+        return self.ddG
