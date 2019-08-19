@@ -39,7 +39,7 @@ def get_solv(files):
     """
     tail = "tail -q -n 3".split()
     solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-    unparsed = coul.stdout.decode('utf-8').split('\n')
+    unparsed = solv.stdout.decode('utf-8').split('\n')
     solv = [i for i in unparsed if 'Solvation Energy' in i]
     parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
 
@@ -1078,13 +1078,13 @@ class AffinityCollector:
         for d in self.G_bound.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
-            self.G_bound['SOLV'][d] = get_coul(files)
+            self.G_bound['SOLV'][d] = get_solv(files)
 
             files = glob.glob("*/%s_solvation.log" % self.grp2)
-            self.G_grp1['SOLV'][d] = get_coul(files)
+            self.G_grp1['SOLV'][d] = get_solv(files)
 
             files = glob.glob("*/%s_solvation.log" % self.grp2)
-            self.G_grp2['SOLV'][d] = get_coul(files)
+            self.G_grp2['SOLV'][d] = get_solv(files)
 
             os.chdir(self.maindir)
 
@@ -1141,6 +1141,9 @@ class AffinityCollector:
 
             for i in self.dG_unbound.index:
                 self.ddG[c][i] = self.dG_bound[c][i] - self.dG_unbound[c][i]
+
+        for i in self.ddG.index:
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
 
     
     def fitaffinity(self, alpha, beta, gamma, c, pka=0):
