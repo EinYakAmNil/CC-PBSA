@@ -346,7 +346,7 @@ class DataGenerator:
 
             for ori, abs_ in files:
                 shutil.copy(abs_, self.maindir)
-                v[v.index(ori)] = abs_
+                v[v.index(ori)] = self.maindir+"/"+abs_.split("/")[-1]
                 self.flags[k] = v
 
         shutil.copy(spmdp, self.maindir)
@@ -870,6 +870,7 @@ class DataCollector:
         tail = "tail -q -n 3".split()
         for d in self.G.index:
             os.chdir(d)
+            files = glob.glob("*/solvation.log")
             self.G['SOLV'][d] = get_solv(files)
 
             os.chdir(self.maindir)
@@ -1160,3 +1161,71 @@ class AffinityCollector:
             self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
 
         return self.ddG
+
+
+class GXG(DataGenerator, DataCollector):
+    """Prepares a directory for the creation/calculation of a GXG tripeptides
+    energy table. This serves as an estimation of the energy difference of the
+    unfolded state. Subclassed from DataGenerator and DataCollector.
+    """
+    def __init__(
+        self,
+        flags,
+        spmdp,
+        verbosity=0
+    ):
+        """In contrast to DataGenerator, this constructor does not require the
+        wildtype .pdb file or a list of mutations.
+        """
+        if verbosity == 0:
+            self.pipe = subprocess.PIPE
+
+        elif verbosity == 1:
+            self.pipe = None
+
+        else:
+            raise ValueError
+        
+        self.flags = parse_flags(flags)
+        self.flags.setdefault("disco", []).extend(["-op", ""])
+        self.chains = 'A'
+        os.mkdir('GXG')
+        os.chdir('GXG')
+        self.maindir = os.getcwd()
+
+        for x in self.aa1:
+            gxg = 'G%sG' % x
+            os.mkdir(gxg)
+            cmd.fab(gxg)
+            cmd.save('%s/%s.pdb' % (gxg, gxg))
+            cmd.alter('chain ""', 'chains="A"')
+            cmd.reinitialize()
+
+        os.chdir('..')
+
+        for k, v in self.flags.items():
+            files = list(i for i in filecheck(*v))
+
+            for ori, abs_ in files:
+                shutil.copy(abs_, self.maindir)
+                v[v.index(ori)] = self.maindir+"/"+abs_.split("/")[-1]
+                self.flags[k] = v
+
+        shutil.copy(spmdp, self.maindir)
+        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
+
+        os.chdir(self.maindir)
+        self.wds = [self.maindir + '/G%sG' % x for x in self.aa1]
+        self.G = pd.DataFrame(0.0,
+                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+                index=next(os.walk('.'))[1]
+        )
+
+
+    def create_table(self):
+        """Creates the lookup table for the unfolded state in stability
+        calculations.
+        """
+        self.fullrun()
+        G = self.search_data()
+        print(G)

@@ -3,21 +3,6 @@ import argparse
 import os
 import sys
 
-
-#def gxg(
-#    flags,
-#    min_mdp,
-#    energy_mdp,
-#    mdrun_table,
-#    pbeparams
-#):
-#    gxg = GXG(flags, min_mdp, energy_mdp, mdrun_table, pbeparams)
-#    gxg()
-#    gxg.G.to_csv('gxg.csv')
-#    
-#    return gxg.G
-
-
 def main():
     pkgpath = __path__[0]
     cliparser = argparse.ArgumentParser(prog='ccpbsa')
@@ -90,26 +75,25 @@ def main():
             paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
             sys.exit(0)
 
-#    if cliargs.gxg:
-#        print("Making a new GXG table.")
-#        GXG_ = gxg(
-#            cliargs.flags,
-#            cliargs.minimization_mdp,
-#            cliargs.energy_mdp,
-#            cliargs.dielectric_table,
-#            cliargs.gropbe
-#        )
-#        print(GXG_)
-#        sys.exit()
+    if cliargs.v:
+        verbose = 1
+    else:
+        verbose = 0
+
+    if cliargs.routine == 'gxg':
+        print("Making a new GXG table.")
+        gxg = GXG(
+            cliargs.flags,
+            cliargs.energy_mdp,
+            verbose
+        )
+        G_table = gxg.create_table()
+        print(G_table)
+        G_table.to_csv('GXG.csv')
 
     if cliargs.routine == 'stability':
         options = cliparser.add_argument_group("OPTIONS")
         cliargs = cliparser.parse_args()
-
-        if cliargs.v:
-            verbose = 1
-        else:
-            verbose = 0
 
         data = DataGenerator(
             wtpdb = cliargs.wildtype,
@@ -154,11 +138,6 @@ def main():
         search.ddG.to_csv("ddG_fit.csv")
 
     elif cliargs.routine == 'affinity':
-
-        if cliargs.v:
-            verbose = 1
-        else:
-            verbose = 0
 
         if cliargs.fit_parameters == pkgpath:
             fitprm = pkgpath + '/parameters/fit_affinity.txt'
