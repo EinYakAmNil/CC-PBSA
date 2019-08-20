@@ -107,7 +107,7 @@ def main():
         search.search_data()
         print("G values:")
         print(search.G)
-        G.to_csv("G.csv")
+        search.G.to_csv("G.csv")
 
         if cliargs.fit_parameters == pkgpath:
             fitprm = pkgpath + '/parameters/fit_stability.txt'
