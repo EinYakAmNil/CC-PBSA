@@ -1227,5 +1227,4 @@ class GXG(DataGenerator, DataCollector):
         calculations.
         """
         self.fullrun()
-        G = self.search_data()
-        print(G)
+        return self.search_data()
