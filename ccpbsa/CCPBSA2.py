@@ -24,24 +24,24 @@ def get_coul(files):
     """Get the tail of a list of log files to extract the mean value of the
     Coulomb Energy.
     """
-    tail = "tail -q -n 5".split()
-    coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    cat = "cat".split()
+    coul = subprocess.run(cat + files, stdout=subprocess.PIPE)
     unparsed = coul.stdout.decode('utf-8').split('\n')
-    coul = [i for i in unparsed if 'Coulombic energy' in i]
-    parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
+    coul = [i for i in unparsed if '>Result	 Coulombic energy:' in i]
+    parsed = [float(i[:i.index(' kJ')].split("=")[1]) for i in coul]
 
     return np.array(parsed).mean()
 
 
 def get_solv(files):
     """Get the tail of a list of log files to extract the mean value of the
-    Solvation Energy.
+    Coulomb Energy.
     """
-    tail = "tail -q -n 3".split()
-    solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
+    cat = "cat".split()
+    solv = subprocess.run(cat + files, stdout=subprocess.PIPE)
     unparsed = solv.stdout.decode('utf-8').split('\n')
-    solv = [i for i in unparsed if 'Solvation Energy' in i]
-    parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
+    solv = [i for i in unparsed if '>Result	 Solvation Energy:' in i]
+    parsed = [float(i[:i.index(' kJ')].split("=")[1]) for i in solv]
 
     return np.array(parsed).mean()
 
