@@ -504,15 +504,18 @@ class DataGenerator:
         formula. Used in .fullrun() if the mode is stability
         """
         trjcat = ['trjcat', '-cat', 'yes', '-f']
-        covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
-        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
+        covar = ['covar', '-f', 'trajout.xtc', '-nopbc', '-s']
+        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy', '-s']
 
         trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
             for n in range(len(self))]
 
         gmx(trjcat+trrs)
-        gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'0')
-        entropy = gmx(anaeig, stdout=subprocess.PIPE)
+        gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'2\n2\n')
+        entropy = gmx(
+            anaeig + [self.maindir+'/'+en+"/topol.tpr"],
+            stdout=subprocess.PIPE
+        )
         log('entropy.log', entropy)
 
 
