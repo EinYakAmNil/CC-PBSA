@@ -134,8 +134,9 @@ def parse_mutations(file_):
             MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
     aa123 = dict(zip(aa1,aa3))
     raw = open(file_, 'r').readlines()
+    raw = [i for i in raw if i != '\n']
 
-#    Remove whitespaces. Like BLM tries to do.
+#    Remove whitespaces and empty lines
     raw = [i.replace(" ", "") for i in raw]
     raw = [i[:-1].split(",") for i in raw]
     maxmuts = max([len(i) for i in raw])
