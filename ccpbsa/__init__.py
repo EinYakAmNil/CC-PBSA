@@ -22,8 +22,8 @@ def main():
     options.add_argument(
         "-m", "--mutations",
         help="a .txt file with the list of mutations. Each mutant separated \
-        by a newline. Multiple mutations in the same mutant should be \
-        separated by a comma."
+        by a newline. Multiple mutations in the same mutant are to be \
+        separated by comma."
     )
     options.add_argument(
         "-f", "--flags",

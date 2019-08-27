@@ -402,7 +402,7 @@ class DataGenerator:
         new structures
         """
         pdb = d.split("/")[-1] + ".pdb"
-        concoord(self.pipe['stdout'], b'2\n1', pdb, **self.flags)
+        concoord(self.pipe['stdout'], b'1\n1', pdb, **self.flags)
 
         for i in range(1, len(self)+1):
             os.mkdir(str(i))
@@ -582,6 +582,21 @@ class DataGenerator:
         for en in tqdm(ensembles):
             os.chdir(en)
             self.schlitter(en)
+            os.chdir(self.maindir)
+
+
+    def no_concoord(self):
+        """Get energy values without running CONCOORD to ignore the flexibility
+        contribution to the energy term. Very fast alternative.
+        """
+        print("Minimizing structures and extract values.")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.do_minimization(d)
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            self.area()
             os.chdir(self.maindir)
         
 
@@ -914,10 +929,11 @@ class DataCollector:
         for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
+            files += [next(i for i in os.listdir() if i == 'solvation.log')]
+            print(files)
             self.G['COUL'][d] = get_coul(files)
 
             os.chdir(self.maindir)
-        
 
 
     def search_solvation(self):
@@ -1286,3 +1302,17 @@ class GXG(DataGenerator, DataCollector):
         """
         self.fullrun()
         return self.search_data()
+
+
+if __name__ == '__main__':
+    x = DataGenerator(
+        "1cho.pdb",
+        "mut.txt",
+        "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
+        "parameters/energy.mdp",
+        1
+    )
+    x.no_concoord()
+    y = DataCollector(x)
+    y.search_coulomb()
+    print(y.G)
