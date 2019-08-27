@@ -176,7 +176,7 @@ def parse_mutations(file_):
     return mut_df
 
 
-def concoord(pipe, *pdb, **flags):
+def concoord(pipe, input_, *pdb, **flags):
     """Takes arbitrarily many .pdb files as input to generate structure
     ensembles using CONCOORD. Additional flags can be passed via a dictionary
     with the keys corresponding to the programs, i.e. \"dist\" and \"disco\".
@@ -200,9 +200,6 @@ def concoord(pipe, *pdb, **flags):
         if 'disco' in flags.keys():
             disco_input.extend(flags['disco'])
         
-        if 'input' in flags.keys():
-            input_ = flags['input']
-
         dist = subprocess.run(
             dist_input,
             input=input_,
@@ -405,7 +402,7 @@ class DataGenerator:
         new structures
         """
         pdb = d.split("/")[-1] + ".pdb"
-        concoord(self.pipe['stdout'], pdb, **self.flags, input=b'2\n1')
+        concoord(self.pipe['stdout'], b'2\n1', pdb, **self.flags)
 
         for i in range(1, len(self)+1):
             os.mkdir(str(i))
@@ -437,7 +434,8 @@ class DataGenerator:
                 'confout.gro',
                 'topol.tpr',
                 d.split("/")[-1] + ".pdb",
-                **self.pipe
+                **self.pipe,
+                input=b'0'
             )
 
             os.chdir(self.maindir)
@@ -481,18 +479,21 @@ class DataGenerator:
         log("solvation.log", gropbe)
 
         if self.pipe['stdout'] == None:
-            print(gropbe.stdout)
+            print(gropbe.stdout.decode('utf-8'))
 
 
     def lj(self):
         """Calculate the Lennard-Jones Energy based on a sp.tpr
         """
-        gmx([
-            'mdrun', '-s', 'sp.tpr',
-            '-rerun', 'confout.gro',
-            '-deffnm', 'sp',
-            '-nt', '1'
-        ])
+        gmx(
+            [
+                'mdrun', '-s', 'sp.tpr',
+                '-rerun', 'confout.gro',
+                '-deffnm', 'sp',
+                '-nt', '1'
+            ],
+            **self.pipe
+        )
         lj = gmx(
             ['energy', '-f', 'sp.edr', '-sum', 'yes'],
             input=b'5 7',
@@ -502,7 +503,7 @@ class DataGenerator:
         log("lj.log", lj)
 
         if self.pipe['stdout'] == None:
-            print(gropbe.stdout)
+            print(lj.stdout.decode('utf-8'))
 
 
     def area(self):
@@ -525,17 +526,21 @@ class DataGenerator:
         trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
             for n in range(len(self))]
 
-        gmx(trjcat+trrs)
-        gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'2\n2\n')
+        gmx(trjcat+trrs, **self.pipe)
+        gmx(
+            covar+[self.maindir+'/'+en+"/topol.tpr"],
+            input=b'2\n2\n',
+            **self.pipe
+        )
         entropy = gmx(
             anaeig + [self.maindir+'/'+en+"/topol.tpr"],
             stdout=subprocess.PIPE,
-            stderr=self.PIPE['stderr']
+            stderr=self.pipe['stderr']
         )
         log('entropy.log', entropy)
 
         if self.pipe['stdout'] == None:
-            print(gropbe.stdout)
+            print(entropy.stdout.decode('utf-8'))
 
 
     def fullrun(self):
@@ -699,7 +704,7 @@ class AffinityGenerator(DataGenerator):
         log("%s_solvation.log" % self.grp1, gropbe)
 
         if self.pipe['stdout'] == None:
-            print(gropbe.stdout)
+            print(gropbe.stdout.decode('utf-8'))
         
         chainselec = ",".join(str(i) for i in range(len(self.grp2)))
 
@@ -717,7 +722,7 @@ class AffinityGenerator(DataGenerator):
         log("%s_solvation.log" % self.grp2, gropbe)
 
         if self.pipe['stdout'] == None:
-            print(gropbe.stdout)
+            print(gropbe.stdout.decode('utf-8'))
 
 
     def lj(self):
@@ -739,7 +744,7 @@ class AffinityGenerator(DataGenerator):
         log(self.grp1+"_lj.log", lj)
 
         if self.pipe['stdout'] == None:
-            print(lj.stdout)
+            print(lj.stdout.decode('utf-8'))
 
         gmx([
             'mdrun', '-s', self.grp2+'_sp.tpr',
@@ -756,7 +761,7 @@ class AffinityGenerator(DataGenerator):
         log("".join(self.grp2)+"_lj.log", lj)
 
         if self.pipe['stdout'] == None:
-            print(lj.stdout)
+            print(lj.stdout.decode('utf-8'))
 
 
     def area(self):
