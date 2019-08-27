@@ -82,6 +82,7 @@ def main():
 
     if cliargs.routine == 'gxg':
         print("Making a new GXG table.")
+        print("Initializing directory.")
         gxg = GXG(
             cliargs.flags,
             cliargs.energy_mdp,
@@ -95,6 +96,7 @@ def main():
         options = cliparser.add_argument_group("OPTIONS")
         cliargs = cliparser.parse_args()
 
+        print("Initializing directory.")
         data = DataGenerator(
             wtpdb = cliargs.wildtype,
             mutlist = cliargs.mutations,
@@ -149,6 +151,7 @@ def main():
             parameters = [l.split("=") for l in parameters]
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
+        print("Initializing directory.")
         data = AffinityGenerator(
             wtpdb = cliargs.wildtype,
             mutlist = cliargs.mutations,
@@ -158,7 +161,6 @@ def main():
             verbosity = verbose
         )
         data.fullrun()
-
 
         search = AffinityCollector(data)
         search.search_data()
