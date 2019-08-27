@@ -2,10 +2,11 @@ import glob
 import os
 import shutil
 import subprocess
+from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import pymol
-pymol.finish_launching(['pymol', '-qc'])
+pymol.finish_launching(['pymol', '-Qc'])
 cmd = pymol.cmd
 
 def get_lj(files):
@@ -230,17 +231,17 @@ def minimize(
     editconf,
     grompp,
     mdrun,
-    pipe
+    **kwargs
 ):
     """Run a energy minimization starting from a .pdb file.
     """
-    gmx(['pdb2gmx'] + pdb2gmx, stdout=pipe, stderr=pipe)
-    gmx(['editconf'] + editconf, stdout=pipe, stderr=pipe)
-    gmx(['grompp'] + grompp, stdout=pipe, stderr=pipe)
-    gmx(['mdrun'] + mdrun, stdout=pipe, stderr=pipe)
+    gmx(['pdb2gmx'] + pdb2gmx, **kwargs)
+    gmx(['editconf'] + editconf, **kwargs)
+    gmx(['grompp'] + grompp, **kwargs)
+    gmx(['mdrun'] + mdrun, **kwargs)
  
 
-def gro2pdb(gro, tpr, pdb, pipe):
+def gro2pdb(gro, tpr, pdb, **kwargs):
     """Replace the original .pdb file by a .gro file. Preserves chains.
     Requires the originial .pdb file to still be there.
     """
@@ -249,9 +250,10 @@ def gro2pdb(gro, tpr, pdb, pipe):
     cmd.reinitialize()
     trjconv = gmx(
         ['trjconv', '-f', gro, '-s', tpr, '-o', pdb],
-        input=b'0',
-        stdout=pipe,
-        stderr=pipe
+        **kwargs
+#        input=b'0',
+#        stdout=pipe,
+#        stderr=pipe
     )
     cmd.load(pdb)
     replace = cmd.get_chains()
@@ -302,10 +304,16 @@ class DataGenerator:
         verbosity=0
     ):
         if verbosity == 0:
-            self.pipe = subprocess.PIPE
+            self.pipe = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
 
         elif verbosity == 1:
-            self.pipe = None
+            self.pipe = {
+                'stdout': None,
+                'stderr': None
+            }
 
         else:
             raise ValueError
@@ -400,7 +408,7 @@ class DataGenerator:
         new structures
         """
         pdb = d.split("/")[-1] + ".pdb"
-        concoord(self.pipe, pdb, **self.flags, input=b'2\n1')
+        concoord(self.pipe['stdout'], pdb, **self.flags, input=b'2\n1')
 
         for i in range(1, len(self)+1):
             os.mkdir(str(i))
@@ -418,7 +426,7 @@ class DataGenerator:
             self.flags['editconf'],
             self.flags['grompp'] + ['-c', 'out.gro'],
             self.flags['mdrun'],
-            pipe=self.pipe
+            **self.pipe
         )
 
 
@@ -432,7 +440,7 @@ class DataGenerator:
                 'confout.gro',
                 'topol.tpr',
                 d.split("/")[-1] + ".pdb",
-                pipe=self.pipe
+                **self.pipe
             )
 
             os.chdir(self.maindir)
@@ -441,12 +449,15 @@ class DataGenerator:
     def single_point(self):
         """Creates a single point .tpr file.
         """
-        gmx([
-            'grompp', '-f', self.spmdp,
-            '-c', 'confout.gro',
-            '-o', 'sp.tpr',
-            '-maxwarn', '1'
-        ])
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', 'confout.gro',
+                '-o', 'sp.tpr',
+                '-maxwarn', '1'
+            ],
+            **self.pipe
+        )
 
 
     def electrostatics(self):
@@ -467,10 +478,13 @@ class DataGenerator:
             ["gropbe", 'gropbe.prm'],
             input=bytes(chainselec, 'utf-8'),
             stdout=subprocess.PIPE,
-            stderr=self.pipe
+            stderr=self.pipe['stderr']
         )
         gropbe.stderr = None
         log("solvation.log", gropbe)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout)
 
 
     def lj(self):
@@ -486,9 +500,12 @@ class DataGenerator:
             ['energy', '-f', 'sp.edr', '-sum', 'yes'],
             input=b'5 7',
             stdout=subprocess.PIPE,
-            stderr=None
+            stderr=self.pipe['stderr']
         )
         log("lj.log", lj)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout)
 
 
     def area(self):
@@ -497,7 +514,7 @@ class DataGenerator:
         ensemble will be used and the values for the interaction surface will
         be written into the .xvg file
         """
-        gmx(['sasa', '-s', 'confout.gro'], input=b'0')
+        gmx(['sasa', '-s', 'confout.gro'], input=b'0', **self.pipe)
 
 
     def schlitter(self, en):
@@ -515,22 +532,28 @@ class DataGenerator:
         gmx(covar+[self.maindir+'/'+en+"/topol.tpr"], input=b'2\n2\n')
         entropy = gmx(
             anaeig + [self.maindir+'/'+en+"/topol.tpr"],
-            stdout=subprocess.PIPE
+            stdout=subprocess.PIPE,
+            stderr=self.PIPE['stderr']
         )
         log('entropy.log', entropy)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout)
 
 
     def fullrun(self):
         """Use all of the default behaviour to generate the data.
         """
-        for d in self.wds:
+        print("Minimizing starting structures")
+        for d in tqdm(self.wds):
             os.chdir(d)
             self.do_minimization(d)
             os.chdir(self.maindir)
 
         self.update_structs()
 
-        for d in self.wds:
+        print("Generating CONCOORD structure ensembles.")
+        for d in tqdm(self.wds):
             os.chdir(d)
             self.do_concoord(d)
             os.chdir(self.maindir)
@@ -538,7 +561,8 @@ class DataGenerator:
         self.wds = [d+'/'+str(i) for d in self.wds \
                 for i in range(1, len(self)+1)]
 
-        for d in self.wds:
+        print("Minimizing structures and extract values.")
+        for d in tqdm(self.wds):
             os.chdir(d)
             self.do_minimization(d)
             self.single_point()
@@ -549,10 +573,13 @@ class DataGenerator:
 
         ensembles = [i.split('/')[-2] for i in self.wds]
         ensembles = list(dict.fromkeys(ensembles))
-        for en in ensembles:
+
+        for en in tqdm(ensembles):
             os.chdir(en)
             self.schlitter(en)
             os.chdir(self.maindir)
+        
+        print("Finished!")
 
 
 class AffinityGenerator(DataGenerator):
@@ -611,7 +638,7 @@ class AffinityGenerator(DataGenerator):
                 '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
             ],
             self.flags['mdrun'] + ['-deffnm', fn],
-            pipe=self.pipe
+            **self.pipe
         )
         fn = self.grp2
         minimize(
@@ -623,27 +650,33 @@ class AffinityGenerator(DataGenerator):
                 '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
             ],
             self.flags['mdrun'] + ['-deffnm', fn],
-            pipe=self.pipe
+            **self.pipe
         )
 
 
     def single_point(self):
         """Creates a single point .tpr file of the single groups.
         """
-        gmx([
-            'grompp', '-f', self.spmdp,
-            '-c', self.grp1+'.gro',
-            '-p', self.grp1+'_topol.top',
-            '-o', self.grp1+'_sp.tpr',
-            '-maxwarn', '1'
-        ])
-        gmx([
-            'grompp', '-f', self.spmdp,
-            '-c', self.grp2+'.gro',
-            '-p', self.grp2+'_topol.top',
-            '-o', self.grp2+'_sp.tpr',
-            '-maxwarn', '1'
-        ])
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp1+'.gro',
+                '-p', self.grp1+'_topol.top',
+                '-o', self.grp1+'_sp.tpr',
+                '-maxwarn', '1',
+            ],
+            **self.pipe
+        )
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp2+'.gro',
+                '-p', self.grp2+'_topol.top',
+                '-o', self.grp2+'_sp.tpr',
+                '-maxwarn', '1',
+            ],
+            **self.pipe
+        )
 
 
     def electrostatics(self):
@@ -663,10 +696,12 @@ class AffinityGenerator(DataGenerator):
             ["gropbe", 'gropbe.prm'],
             input=bytes(chainselec, 'utf-8'),
             stdout=subprocess.PIPE,
-            stderr=self.pipe
+            stderr=self.pipe['stderr']
         )
-        gropbe.stderr = None
         log("%s_solvation.log" % self.grp1, gropbe)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout)
         
         chainselec = ",".join(str(i) for i in range(len(self.grp2)))
 
@@ -679,10 +714,12 @@ class AffinityGenerator(DataGenerator):
             ["gropbe", 'gropbe.prm'],
             input=bytes(chainselec, 'utf-8'),
             stdout=subprocess.PIPE,
-            stderr=self.pipe
+            stderr=self.pipe['stderr']
         )
-        gropbe.stderr = None
         log("%s_solvation.log" % self.grp2, gropbe)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout)
 
 
     def lj(self):
@@ -699,9 +736,12 @@ class AffinityGenerator(DataGenerator):
             ['energy', '-f', self.grp1+'_sp.edr', '-sum', 'yes'],
             input=b'5 7',
             stdout=subprocess.PIPE,
-            stderr=None
+            stderr=self.pipe['stderr']
         )
         log(self.grp1+"_lj.log", lj)
+
+        if self.pipe['stdout'] == None:
+            print(lj.stdout)
 
         gmx([
             'mdrun', '-s', self.grp2+'_sp.tpr',
@@ -713,9 +753,12 @@ class AffinityGenerator(DataGenerator):
             ['energy', '-f', self.grp2+'_sp.edr', '-sum', 'yes'],
             input=b'5 7',
             stdout=subprocess.PIPE,
-            stderr=None
+            stderr=self.pipe['stderr']
         )
         log("".join(self.grp2)+"_lj.log", lj)
+
+        if self.pipe['stdout'] == None:
+            print(lj.stdout)
 
 
     def area(self):
@@ -726,26 +769,30 @@ class AffinityGenerator(DataGenerator):
         gmx(sasa + ['confout.gro'], input=b'0')
         gmx(
             sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
-            input=b'0'
+            input=b'0',
+            **self.pipe
         )
         gmx(
             sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
-            input=b'0'
+            input=b'0',
+            **self.pipe
         )
         os.chdir(self.maindir)
 
 
     def fullrun(self):
-        """Generate all the data for DataCollector
+        """Generate all the data for DataCollector.
         """
-        for d in self.wds:
+        print("Minimizing starting structures")
+        for d in tqdm(self.wds):
             os.chdir(d)
             super().do_minimization(d)
             os.chdir(self.maindir)
         
         super().update_structs()
 
-        for d in self.wds:
+        print("Generating CONCOORD structure ensembles.")
+        for d in tqdm(self.wds):
             os.chdir(d)
             self.do_concoord(d)
             os.chdir(self.maindir)
@@ -753,7 +800,8 @@ class AffinityGenerator(DataGenerator):
         self.wds = [d+'/'+str(i) for d in self.wds \
                 for i in range(1, len(self)+1)]
 
-        for d in self.wds:
+        print("Minimizing structures and extract values.")
+        for d in tqdm(self.wds):
             os.chdir(d)
             super().do_minimization(d)
             super().single_point()
@@ -761,7 +809,7 @@ class AffinityGenerator(DataGenerator):
             super().lj()
             os.chdir(self.maindir)
 
-        for d in self.wds:
+        for d in tqdm(self.wds):
             os.chdir(d)
             self.split_chains(d)
             self.do_minimization()
@@ -771,6 +819,7 @@ class AffinityGenerator(DataGenerator):
             os.chdir(self.maindir)
         
         self.area()
+        print('Finished!')
 
 
 class DataCollector:
