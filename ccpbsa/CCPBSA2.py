@@ -500,6 +500,7 @@ class DataGenerator:
             stdout=subprocess.PIPE,
             stderr=self.pipe['stderr']
         )
+        lj.stderr = None
         log("lj.log", lj)
 
         if self.pipe['stdout'] == None:
@@ -577,13 +578,12 @@ class DataGenerator:
         ensembles = [i.split('/')[-2] for i in self.wds]
         ensembles = list(dict.fromkeys(ensembles))
 
+        print("Calculating Entropy of structure ensembles.") 
         for en in tqdm(ensembles):
             os.chdir(en)
             self.schlitter(en)
             os.chdir(self.maindir)
         
-        print("Finished!")
-
 
 class AffinityGenerator(DataGenerator):
     """Subclassed from DataGenerator to add additional procedures to calculate
@@ -741,6 +741,7 @@ class AffinityGenerator(DataGenerator):
             stdout=subprocess.PIPE,
             stderr=self.pipe['stderr']
         )
+        lj.stderr = None
         log(self.grp1+"_lj.log", lj)
 
         if self.pipe['stdout'] == None:
@@ -758,6 +759,7 @@ class AffinityGenerator(DataGenerator):
             stdout=subprocess.PIPE,
             stderr=self.pipe['stderr']
         )
+        lj.stderr = None
         log("".join(self.grp2)+"_lj.log", lj)
 
         if self.pipe['stdout'] == None:
@@ -803,7 +805,7 @@ class AffinityGenerator(DataGenerator):
         self.wds = [d+'/'+str(i) for d in self.wds \
                 for i in range(1, len(self)+1)]
 
-        print("Minimizing structures and extract values.")
+        print("Minimizing structures and extract values of bounded proteins")
         for d in tqdm(self.wds):
             os.chdir(d)
             super().do_minimization(d)
@@ -812,6 +814,7 @@ class AffinityGenerator(DataGenerator):
             super().lj()
             os.chdir(self.maindir)
 
+        print("Minimizing structures and extract values of unbounded proteins")
         for d in tqdm(self.wds):
             os.chdir(d)
             self.split_chains(d)
@@ -822,7 +825,6 @@ class AffinityGenerator(DataGenerator):
             os.chdir(self.maindir)
         
         self.area()
-        print('Finished!')
 
 
 class DataCollector:
