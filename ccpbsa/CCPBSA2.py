@@ -203,9 +203,6 @@ def concoord(pipe, *pdb, **flags):
         if 'input' in flags.keys():
             input_ = flags['input']
 
-        else:
-            input_ = None
-
         dist = subprocess.run(
             dist_input,
             input=input_,
@@ -550,6 +547,7 @@ class DataGenerator:
             self.do_minimization(d)
             os.chdir(self.maindir)
 
+        print("Updating Structures.")
         self.update_structs()
 
         print("Generating CONCOORD structure ensembles.")
