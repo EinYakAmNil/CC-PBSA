@@ -1266,10 +1266,16 @@ class GXG(DataGenerator, DataCollector):
         wildtype .pdb file or a list of mutations.
         """
         if verbosity == 0:
-            self.pipe = subprocess.PIPE
+            self.pipe = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
 
         elif verbosity == 1:
-            self.pipe = None
+            self.pipe = {
+                'stdout': None,
+                'stderr': None
+            }
 
         else:
             raise ValueError
