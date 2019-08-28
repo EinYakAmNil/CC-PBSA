@@ -1283,6 +1283,7 @@ class GXG(DataGenerator, DataCollector):
         self.flags = parse_flags(flags)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.chains = 'A'
+        self.n = len(self)
         os.mkdir('GXG')
         os.chdir('GXG')
         self.maindir = os.getcwd()
@@ -1309,10 +1310,18 @@ class GXG(DataGenerator, DataCollector):
         self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
 
         os.chdir(self.maindir)
-        self.wds = [self.maindir + '/G%sG' % x for x in self.aa1]
+        self.wds = ['G%sG' % x for x in self.aa1]
+        idx = next(os.walk('.'))[1]
+        self.G_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=idx
+        )
+        idx = pd.MultiIndex.from_tuples(
+            [(i, j) for i in idx for j in range(1, len(self)+1)]
+        )
         self.G = pd.DataFrame(0.0,
-                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=next(os.walk('.'))[1]
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS'],
+            index=idx
         )
 
 
@@ -1324,16 +1333,17 @@ class GXG(DataGenerator, DataCollector):
         return self.search_data()
 
 
-#if __name__ == '__main__':
-#    x = DataGenerator(
-#        "1cho.pdb",
-#        "mut.txt",
+if __name__ == '__main__':
+    x = GXG(
+        "gxgflags.txt",
 #        "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
-#        "EFG",
-#        "parameters/energy.mdp",
-#        1,
+        "parameters/energy.mdp",
+        0,
 #        dummy=True
-#    )
+    )
+    x.create_table()
+    x.G_mean.to_csv("GXG_mean.csv")
+    x.G.to_csv("GXG.csv")
 #    x.fullrun()
 #    x.no_concoord()
 #

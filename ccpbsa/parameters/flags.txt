@@ -1,7 +1,7 @@
 [dist]
 
 [pdb2gmx]
--ff=oplsaa
+-ff=gromos53a6
 -water=none
 
 [editconf]
