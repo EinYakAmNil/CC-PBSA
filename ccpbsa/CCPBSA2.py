@@ -441,13 +441,16 @@ class DataGenerator:
     def single_point(self):
         """Creates a single point .tpr file.
         """
+        gromppflags = self.flags['grompp'].copy()
+        idx = gromppflags.index('-f')
+        gromppflags.pop(idx)
+        gromppflags.pop(idx)
         gmx(
             [
                 'grompp', '-f', self.spmdp,
                 '-c', 'confout.gro',
                 '-o', 'sp.tpr',
-                '-maxwarn', '1'
-            ],
+            ] + gromppflags,
             **self.pipe
         )
 
@@ -607,7 +610,8 @@ class AffinityGenerator(DataGenerator):
         flags,
         chaingrp,
         spmdp,
-        verbosity=0
+        verbosity=0,
+        dummy=False
     ):
         self.grp1 = chaingrp
         cmd.load(wtpdb)
@@ -619,7 +623,8 @@ class AffinityGenerator(DataGenerator):
            mutlist=mutlist,
            flags=flags,
            spmdp=spmdp,
-           verbosity=verbosity
+           verbosity=verbosity,
+           dummy=dummy
         )
 
 
@@ -671,14 +676,17 @@ class AffinityGenerator(DataGenerator):
     def single_point(self):
         """Creates a single point .tpr file of the single groups.
         """
+        gromppflags = self.flags['grompp'].copy()
+        idx = gromppflags.index('-f')
+        gromppflags.pop(idx)
+        gromppflags.pop(idx)
         gmx(
             [
                 'grompp', '-f', self.spmdp,
                 '-c', self.grp1+'.gro',
                 '-p', self.grp1+'_topol.top',
                 '-o', self.grp1+'_sp.tpr',
-                '-maxwarn', '1',
-            ],
+            ] + gromppflags,
             **self.pipe
         )
         gmx(
@@ -687,8 +695,7 @@ class AffinityGenerator(DataGenerator):
                 '-c', self.grp2+'.gro',
                 '-p', self.grp2+'_topol.top',
                 '-o', self.grp2+'_sp.tpr',
-                '-maxwarn', '1',
-            ],
+            ] + gromppflags,
             **self.pipe
         )
 
@@ -1108,9 +1115,19 @@ class AffinityCollector:
                 if len(mut) > 0:
                     self.mut_df["Mutation"][i][j] = self.aa321[mut]
 
+        idx = next(os.walk('.'))[1]
+        self.G_bound_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            index=idx
+        )
+
+        if self.n > 0:
+            idx = pd.MultiIndex.from_tuples(
+                [(i, j) for i in idx for j in range(1, len(self)+1)]
+            )
         self.G_bound = pd.DataFrame(0.0,
             columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
-            index=next(os.walk('.'))[1]
+            index=idx
         )
         self.G_grp1 = pd.DataFrame(0.0,
             columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
@@ -1120,7 +1137,7 @@ class AffinityCollector:
             columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=self.G_bound.index
         )
-        self.dG_bound = self.G_bound.drop(self.wt)
+        self.dG_bound = self.G_bound_mean.drop(self.wt)
         self.dG_unbound = pd.DataFrame(0.0,
             columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=self.dG_bound.index
@@ -1334,32 +1351,14 @@ class GXG(DataGenerator, DataCollector):
 
 
 if __name__ == '__main__':
-    x = GXG(
-        "gxgflags.txt",
-#        "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
-        "parameters/energy.mdp",
-        0,
-#        dummy=True
+    x = AffinityGenerator(
+        "1cho.pdb",
+        'mut.txt',
+        '/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
+        'EFG',
+        'parameters/energy.mdp',
+        1,
     )
-    x.create_table()
-    x.G_mean.to_csv("GXG_mean.csv")
-    x.G.to_csv("GXG.csv")
-#    x.fullrun()
-#    x.no_concoord()
-#
-#    x.n = 0
-#    y = DataCollector(x)
-#    y.search_data()
-#    y.dstability('../parameters/GXG-oplsaa.csv')
-#    print(y.dG)
-#    print(y.dG_unfld)
-#
-#    for c in y.G.columns:
-#        for i in y.G_mean.index:
-#            print(y.G.loc[i, c].mean())
-#
-#    y.G.to_csv("G.csv")
-#    x.no_concoord()
-#    y = DataCollector(x)
-#    y.search_coulomb()
-#    print(y.G)
+    x.fullrun()
+#    y = AffinityCollector(x)
+

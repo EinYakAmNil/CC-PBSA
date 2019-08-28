@@ -75,7 +75,7 @@ def main():
             paramfile.write("-tablep="+pkgpath+'/parameters/table4r-6-12.xvg\n')
             paramfile.write("-table="+pkgpath+'/parameters/table4r-6-12.xvg\n')
             paramfile.write("[grompp]\n")
-            paramfile.write("-maxwarn=1\n")
+            paramfile.write("-maxwarn=2\n")
             paramfile.write("-f="+pkgpath+'/parameters/min.mdp\n')
             paramfile.write("[gropbe]\n")
             paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
@@ -128,6 +128,7 @@ def main():
         print("G values:")
         print(search.G)
         search.G.to_csv("G.csv")
+        search.G_mean.to_csv("G_mean.csv")
 
         if cliargs.fit_parameters == pkgpath:
             fitprm = pkgpath + '/parameters/fit_stability.txt'
@@ -194,11 +195,14 @@ def main():
         print("bound")
         print(search.G_bound)
         search.G_bound.to_csv('G_bound.csv')
+        search.G_mean.to_csv("G_bound_mean.csv")
         print("unbound")
         print(search.G_grp1)
         search.G_grp1.to_csv('G_grp1.csv')
+        search.G_grp1.to_csv('G_grp1_mean.csv')
         print(search.G_grp2)
         search.G_grp2.to_csv('G_grp2.csv')
+        search.G_grp2.to_csv('G_grp2_mean.csv')
 
         print("dG values:")
         print("bound")
