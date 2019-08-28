@@ -1,4 +1,3 @@
-import glob
 import os
 import shutil
 import subprocess
@@ -9,51 +8,39 @@ import pymol
 pymol.finish_launching(['pymol', '-Qc'])
 cmd = pymol.cmd
 
-def get_lj(files):
+def get_lj(*files):
     """Get the tail of a list of log files to extract the mean value of the
     Lennard-Jones Energy.
     """
-    tail = "tail -q -n 1 ".split()
-    lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-    unparsed = lj.stdout.decode('utf-8').split('\n')
-    parsed = [float(i.split()[1]) for i in unparsed if len(i) > 0]
+    for f in files:
+        with open(f, 'r') as ljlog:
+            unparsed = ljlog.readlines()
+            onefour = next(i for i in unparsed if 'LJ-14' in i).split()[1]
+            sr = next(i for i in unparsed if 'LJ (SR)' in i).split()[2]
 
-    return np.array(parsed).mean()
+            yield float(onefour), float(sr)
 
 
-def get_coul(files):
+def get_electro(*files):
     """Get the tail of a list of log files to extract the mean value of the
     Coulomb Energy.
     """
-    cat = "cat".split()
-    coul = subprocess.run(cat + files, stdout=subprocess.PIPE)
-    unparsed = coul.stdout.decode('utf-8').split('\n')
-    coul = [i for i in unparsed if '>Result	 Coulombic energy:' in i]
-    parsed = [float(i[:i.index(' kJ')].split("=")[1]) for i in coul]
+    for f in files:
+        with open(f, 'r') as solvlog:
+            unparsed = solvlog.readlines()
+            coul = next(i for i in unparsed if 'Coulombic' in i).split()[6]
+            solv = next(i for i in unparsed if 'Solvation' in i).split()[5]
 
-    return np.array(parsed).mean()
-
-
-def get_solv(files):
-    """Get the tail of a list of log files to extract the mean value of the
-    Coulomb Energy.
-    """
-    cat = "cat".split()
-    solv = subprocess.run(cat + files, stdout=subprocess.PIPE)
-    unparsed = solv.stdout.decode('utf-8').split('\n')
-    solv = [i for i in unparsed if '>Result	 Solvation Energy:' in i]
-    parsed = [float(i[:i.index(' kJ')].split("=")[1]) for i in solv]
-
-    return np.array(parsed).mean()
+            yield float(coul), float(solv)
 
 
-def get_area(files):
-    tail = "tail -q -n 1".split()
-    areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-    unparsed = areas.stdout.decode('utf-8').split('\n')
-    parsed = [float(i.split()[1]) for i in unparsed if len(i) > 0]
+def get_area(*files):
+    for f in files:
+        with open(f, 'r') as arealog:
+            unparsed = arealog.readlines()
+            area = unparsed[-1].split()[1]
 
-    return np.array(parsed).mean()
+            yield float(area)
 
 
 def log(fname, proc_obj):
@@ -144,7 +131,6 @@ def parse_mutations(file_):
     muts = [tuple(i + [""] * (maxmuts - len(i))) for i in raw]
 
 #    Index definition for the DataFrame.
-    n_muts = list(np.arange(len(raw)))
     headers = ["Chain", "AA", "Residue", "Mutation"]
 
     mut_df = pd.DataFrame(
@@ -295,7 +281,8 @@ class DataGenerator:
         mutlist, # list of mutations
         flags, # file specifying the flags for CONCOORD and GROMACS
         spmdp,
-        verbosity=0
+        verbosity=0,
+        dummy=False
     ):
         if verbosity == 0:
             self.pipe = {
@@ -312,11 +299,11 @@ class DataGenerator:
         else:
             raise ValueError
 
-
         self.wtpdb = os.getcwd() + "/" + wtpdb
         wtname = wtpdb.split('/')[-1]
         self.wt = wtname[:wtname.find(".pdb")]
         self.flags = parse_flags(flags)
+        self.n = len(self)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.mut_df = parse_mutations(mutlist)
         self.wds = [self.wt]
@@ -327,6 +314,20 @@ class DataGenerator:
         self.chains = cmd.get_chains()
         cmd.reinitialize()
 
+        if not dummy:
+            self.initdir(spmdp)
+            self.do_mutate()
+
+        else:
+            self.maindir = os.getcwd() + '/' + self.wt
+
+        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
+
+
+    def initdir(self, spmdp):
+        """Creates the directory and filesystem for the structures, called
+        automatically by __init__ if not surpressed.
+        """
 #        Create the directory for data generation.
         try:
             os.mkdir(self.wt)
@@ -341,9 +342,6 @@ class DataGenerator:
         os.mkdir(self.wt)
         shutil.copy(self.wtpdb, self.wt)
 
-#        Copy all parameter files into the main directory. And update new file
-#        locations.
-        os.chdir('..')
         for k, v in self.flags.items():
             files = list(i for i in filecheck(*v))
 
@@ -352,14 +350,13 @@ class DataGenerator:
                 v[v.index(ori)] = self.maindir+"/"+abs_.split("/")[-1]
                 self.flags[k] = v
 
+#        Copy all parameter files into the main directory. And update new file
+#        locations.
+        os.chdir('..')
+
         shutil.copy(spmdp, self.maindir)
-        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
 
         os.chdir(self.maindir)
-
-#        Create mutated structures during initialization of object. This is
-#        done the be consistent with the working directories (wds) attribute
-        self.do_mutate()
 
 
     def __len__(self):
@@ -562,6 +559,7 @@ class DataGenerator:
             self.do_concoord(d)
             os.chdir(self.maindir)
 
+        ensembles = self.wds.copy()
         self.wds = [d+'/'+str(i) for d in self.wds \
                 for i in range(1, len(self)+1)]
 
@@ -575,9 +573,6 @@ class DataGenerator:
             self.area()
             os.chdir(self.maindir)
 
-        ensembles = [i.split('/')[-2] for i in self.wds]
-        ensembles = list(dict.fromkeys(ensembles))
-
         print("Calculating Entropy of structure ensembles.") 
         for en in tqdm(ensembles):
             os.chdir(en)
@@ -589,6 +584,7 @@ class DataGenerator:
         """Get energy values without running CONCOORD to ignore the flexibility
         contribution to the energy term. Very fast alternative.
         """
+        self.n = 0
         print("Minimizing structures and extract values.")
         for d in tqdm(self.wds):
             os.chdir(d)
@@ -869,8 +865,8 @@ class AffinityGenerator(DataGenerator):
 
 
 class DataCollector:
-    """After a fullrun of DataGenerator, the object can be parsed to this class
-    to search for the relevant files in which energy values are supposed to be
+    """After a run of DataGenerator, the object can be parsed to this class to
+    search for the relevant files in which energy values are supposed to be
     stored. Also contains methods to create .csv tables for calculation of
     folding free energy differences between wildtype and mutant protein.
     """
@@ -884,27 +880,39 @@ class DataCollector:
         directories that contains the data is known without much searching.
         """
         self.maindir = data_obj.maindir
+        self.wds = data_obj.wds
         os.chdir(self.maindir)
 
-        self.n = len(data_obj)
+        self.n = data_obj.n
         self.mut_df = data_obj.mut_df
         self.wt = data_obj.wt
 
         for i, k in enumerate(self.mut_df["Mutation"].index):
-        
+ 
             for j, l in enumerate(k):
                 mut = self.mut_df["Mutation"][i][j]
         
                 if len(mut) > 0:
                     self.mut_df["Mutation"][i][j] = self.aa321[mut]
 
-        self.G = pd.DataFrame(0.0, 
-            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=next(os.walk('.'))[1]
+        idx = next(os.walk('.'))[1]
+        self.G_mean = pd.DataFrame(0.0, 
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=idx
         )
-        self.dG = self.G.drop(self.wt)
+
+        if self.n > 0:
+            idx = pd.MultiIndex.from_tuples(
+                [(i, j) for i in idx for j in range(1, len(self)+1)]
+            )
+
+        self.G = pd.DataFrame(0.0, 
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS'],
+            index=idx
+        )
+        self.dG = self.G_mean.drop(self.wt)
         self.ddG = pd.DataFrame(0.0,
-            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            columns=['CALC', 'SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
             index=self.dG.index
         )
 
@@ -919,42 +927,38 @@ class DataCollector:
         """Find the files in which the Lennard-Jones energies are supposed to
         be written in and save the parsed values in self.G.
         """
-        for d in self.G.index:
-            os.chdir(d)
-            
-            files = glob.glob("*/lj.log")
-            files += [i for i in os.listdir() if i == 'lj.log']
-            self.G['LJ'][d] = get_lj(files)
+        for i in self.G.index:
+
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
+
+            else:
+                os.chdir(i)
+
+            LJ = next(get_lj('lj.log'))
+            self.G['LJ (1-4)'][i] = LJ[0]
+            self.G['LJ (SR)'][i] = LJ[1]
 
             os.chdir(self.maindir)
 
 
-    def search_coulomb(self):
+    def search_electro(self):
         """Find the file in which the Coulomb energies are supposed to be
         written in and save the parsed values in G.
         """
-        tail = "tail -q -n 5".split()
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/solvation.log")
-            files += [i for i in os.listdir() if i == 'solvation.log']
-            print(files)
-            self.G['COUL'][d] = get_coul(files)
+        for i in self.G.index:
 
-            os.chdir(self.maindir)
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
 
+            else:
+                os.chdir(i)
 
-    def search_solvation(self):
-        """Find the files in which the solvation energy and the Coulomb
-        potential are supposed to be written in and save the parsed values in
-        self.G.
-        """
-        tail = "tail -q -n 3".split()
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/solvation.log")
-            files += [i for i in os.listdir() if i == 'solvation.log']
-            self.G['SOLV'][d] = get_solv(files)
+            vals = next(get_electro('solvation.log'))
+            self.G['COUL'][i] = vals[0]
+            self.G['SOLV'][i] = vals[1]
 
             os.chdir(self.maindir)
 
@@ -964,11 +968,16 @@ class DataCollector:
         potential are supposed to be written in and save the parsed values in
         G.
         """
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/area.xvg")
-            files += [i for i in os.listdir() if i == 'area.xvg']
-            self.G['SAS'][d] = get_area(files)
+        for i in self.G.index:
+
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
+
+            else:
+                os.chdir(i)
+
+            self.G['SAS'][i] = next(get_area('area.xvg'))
             os.chdir(self.maindir)
 
 
@@ -978,14 +987,14 @@ class DataCollector:
         self.G.
         """
         head = "head -n 1 entropy.log".split()
-        for d in self.G.index:
-            os.chdir(d)
+        for i in self.G_mean.index:
+            os.chdir(i)
             entropy = subprocess.run(head, stdout=subprocess.PIPE)
             entropy = entropy.stdout.decode('utf-8')
             valstart = entropy.index('is ')+3
             valend = entropy.index(' J/mol K')
             entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
-            self.G['-TS'][d] = np.array(-298.15 * entropy)
+            self.G_mean['-TS'][i] = np.array(-298.15 * entropy)
             os.chdir(self.maindir)
 
 
@@ -994,12 +1003,16 @@ class DataCollector:
         Returns the DataFrame object.
         """
         self.search_lj()
-        self.search_coulomb()
-        self.search_solvation()
+        self.search_electro()
         self.search_area()
         self.search_entropy()
 
-        return self.G
+        for c in self.G.columns:
+            
+            for i in self.G_mean.index:
+                self.G_mean.loc[i, c] = self.G.loc[i, c].mean()
+
+        return self.G_mean, self.G
 
 
     def dstability(self, gxg_table):
@@ -1009,7 +1022,7 @@ class DataCollector:
         """
         gxgtable = pd.read_csv(gxg_table, index_col=0)
         self.dG_unfld = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
             index=[]
         )
 
@@ -1028,7 +1041,7 @@ class DataCollector:
                 self.dG_unfld.to_csv("dG_unfold.csv")
 
             for i in self.dG.index:
-                self.dG.loc[i, c] = self.G.loc[i, c] - self.G.loc[self.wt, c]
+                self.dG.loc[i, c] = self.G_mean.loc[i, c] - self.G_mean.loc[self.wt, c]
 
         return self.dG, self.dG_unfld
 
@@ -1081,7 +1094,7 @@ class AffinityCollector:
         self.maindir = data_obj.maindir
         os.chdir(self.maindir)
 
-        self.n = len(data_obj)
+        self.n = data_obj.n
         self.mut_df = data_obj.mut_df
         self.wt = data_obj.wt
         self.grp1 = data_obj.grp1
@@ -1096,24 +1109,24 @@ class AffinityCollector:
                     self.mut_df["Mutation"][i][j] = self.aa321[mut]
 
         self.G_bound = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=next(os.walk('.'))[1]
         )
         self.G_grp1 = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=self.G_bound.index
         )
         self.G_grp2 = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=self.G_bound.index
         )
         self.dG_bound = self.G_bound.drop(self.wt)
         self.dG_unbound = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
             index=self.dG_bound.index
         )
         self.ddG = pd.DataFrame(0.0,
-            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
+            columns=['CALC', 'SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS', 'PKA'],
             index=self.dG_bound.index
         )
 
@@ -1127,13 +1140,13 @@ class AffinityCollector:
         for d in self.G_bound.index:
             os.chdir(d)
 
-            files = glob.glob("*/lj.log")
+            files += [i for i in os.listdir() if i == 'lj.log']
             self.G_bound['LJ'][d] = get_lj(files)
 
-            files = glob.glob("*/%s_lj.log" % self.grp1)
+            files += [i for i in os.listdir() if i == 'lj.log']
             self.G_grp1['LJ'][d] = get_lj(files)
 
-            files = glob.glob("*/%s_lj.log" % self.grp2)
+            files += [i for i in os.listdir() if i == 'lj.log']
             self.G_grp2['LJ'][d] = get_lj(files)
 
             os.chdir(self.maindir)
@@ -1144,13 +1157,10 @@ class AffinityCollector:
         """
         for d in self.G_bound.index:
             os.chdir(d)
-            files = glob.glob("*/solvation.log")
             self.G_bound['COUL'][d] = get_coul(files)
 
-            files = glob.glob("*/%s_solvation.log" % self.grp2)
             self.G_grp1['COUL'][d] = get_coul(files)
 
-            files = glob.glob("*/%s_solvation.log" % self.grp2)
             self.G_grp2['COUL'][d] = get_coul(files)
 
             os.chdir(self.maindir)
@@ -1162,13 +1172,10 @@ class AffinityCollector:
         """
         for d in self.G_bound.index:
             os.chdir(d)
-            files = glob.glob("*/solvation.log")
             self.G_bound['SOLV'][d] = get_solv(files)
 
-            files = glob.glob("*/%s_solvation.log" % self.grp2)
             self.G_grp1['SOLV'][d] = get_solv(files)
 
-            files = glob.glob("*/%s_solvation.log" % self.grp2)
             self.G_grp2['SOLV'][d] = get_solv(files)
 
             os.chdir(self.maindir)
@@ -1179,9 +1186,6 @@ class AffinityCollector:
         and store it in the ddG table since mutant values are not required.
         """
         os.chdir(self.wt)
-        cmplx = glob.glob("*/area.xvg")
-        grp1 = glob.glob("*/%s_area.xvg" % self.grp1)
-        grp2 = glob.glob("*/%s_area.xvg" % self.grp2)
 
         cmplx = get_area(cmplx)
         grp1 = get_area(grp1)
@@ -1314,16 +1318,32 @@ class GXG(DataGenerator, DataCollector):
         return self.search_data()
 
 
-if __name__ == '__main__':
-    x = AffinityGenerator(
-        "1cho.pdb",
-        "mut.txt",
-        "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
-        "EFG",
-        "parameters/energy.mdp",
-        1
-    )
-    x.no_concoord()
+#if __name__ == '__main__':
+#    x = DataGenerator(
+#        "1cho.pdb",
+#        "mut.txt",
+#        "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
+#        "EFG",
+#        "parameters/energy.mdp",
+#        1,
+#        dummy=True
+#    )
+#    x.fullrun()
+#    x.no_concoord()
+#
+#    x.n = 0
+#    y = DataCollector(x)
+#    y.search_data()
+#    y.dstability('../parameters/GXG-oplsaa.csv')
+#    print(y.dG)
+#    print(y.dG_unfld)
+#
+#    for c in y.G.columns:
+#        for i in y.G_mean.index:
+#            print(y.G.loc[i, c].mean())
+#
+#    y.G.to_csv("G.csv")
+#    x.no_concoord()
 #    y = DataCollector(x)
 #    y.search_coulomb()
 #    print(y.G)

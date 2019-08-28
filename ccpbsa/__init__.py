@@ -94,9 +94,10 @@ def main():
             cliargs.energy_mdp,
             verbose
         )
-        G_table = gxg.create_table()
+        G_table, G_sgl = gxg.create_table()
         print(G_table)
         G_table.to_csv('GXG.csv')
+        G_sgl.to_csv('GXG_all_values.csv')
 
     if cliargs.routine == 'stability':
         options = cliparser.add_argument_group("OPTIONS")
