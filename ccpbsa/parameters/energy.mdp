@@ -24,3 +24,4 @@ vdw-type                       = Cut-off
 vdw-modifier                   = None
 rvdw                           = 0
 DispCorr                       = No
+continuation 									 = yes

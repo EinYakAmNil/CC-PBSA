@@ -60,6 +60,12 @@ def main():
         help="Print stdout and stderr of the programs.",
         action='store_true'
     )
+    options.add_argument(
+        "--no-concoord",
+        help="Run energy extraction from minimized structures only, without \
+        generating structure ensembles with CONCOORD.",
+        action='store_true'
+    )
 
     cliargs = cliparser.parse_args()
 
@@ -104,7 +110,13 @@ def main():
             spmdp = cliargs.energy_mdp,
             verbosity = verbose
         )
-        data.fullrun()
+
+        if cliargs.no_concoord:
+            data.no_concoord()
+
+        else:
+            data.fullrun()
+
         search = DataCollector(data)
         search.search_data()
         print("G values:")

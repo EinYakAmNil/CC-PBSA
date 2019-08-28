@@ -842,6 +842,32 @@ class AffinityGenerator(DataGenerator):
         self.area()
 
 
+    def no_concoord(self):
+        """Get energy values without running CONCOORD to ignore the flexibility
+        contribution to the energy term. Very fast alternative.
+        """
+        print("Minimizing structures and extract values of bounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            super().do_minimization(d)
+            super().single_point()
+            super().electrostatics()
+            super().lj()
+            os.chdir(self.maindir)
+
+        print("Minimizing structures and extract values of unbounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.split_chains(d)
+            self.do_minimization()
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            os.chdir(self.maindir)
+        
+        self.area()
+
+
 class DataCollector:
     """After a fullrun of DataGenerator, the object can be parsed to this class
     to search for the relevant files in which energy values are supposed to be
@@ -897,6 +923,7 @@ class DataCollector:
             os.chdir(d)
             
             files = glob.glob("*/lj.log")
+            files += [i for i in os.listdir() if i == 'lj.log']
             self.G['LJ'][d] = get_lj(files)
 
             os.chdir(self.maindir)
@@ -906,30 +933,11 @@ class DataCollector:
         """Find the file in which the Coulomb energies are supposed to be
         written in and save the parsed values in G.
         """
-#        tail = "tail -q -n 1 ".split()
-#        for d in self.G.index:
-#            os.chdir(d)
-#            files = glob.glob("*/coulomb.log")
-#            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-#            parsed = [float(i.split()[1]) for i in \
-#                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
-#            self.G['COUL'][d] = np.array(parsed).mean()
-#            os.chdir(self.maindir)
-#
-#            if self.mode == 'affinity':
-#                files = glob.glob("*/chain_*_coulomb.log")
-#                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-#                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-#                    if 'kJ/mol' in i]
-#                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-#                self.G -= np.array(parsed).sum()
-#
-#            os.chdir(self.maindir)
         tail = "tail -q -n 5".split()
         for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
-            files += [next(i for i in os.listdir() if i == 'solvation.log')]
+            files += [i for i in os.listdir() if i == 'solvation.log']
             print(files)
             self.G['COUL'][d] = get_coul(files)
 
@@ -945,6 +953,7 @@ class DataCollector:
         for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/solvation.log")
+            files += [i for i in os.listdir() if i == 'solvation.log']
             self.G['SOLV'][d] = get_solv(files)
 
             os.chdir(self.maindir)
@@ -958,6 +967,7 @@ class DataCollector:
         for d in self.G.index:
             os.chdir(d)
             files = glob.glob("*/area.xvg")
+            files += [i for i in os.listdir() if i == 'area.xvg']
             self.G['SAS'][d] = get_area(files)
             os.chdir(self.maindir)
 
@@ -1305,14 +1315,15 @@ class GXG(DataGenerator, DataCollector):
 
 
 if __name__ == '__main__':
-    x = DataGenerator(
+    x = AffinityGenerator(
         "1cho.pdb",
         "mut.txt",
         "/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt",
+        "EFG",
         "parameters/energy.mdp",
         1
     )
     x.no_concoord()
-    y = DataCollector(x)
-    y.search_coulomb()
-    print(y.G)
+#    y = DataCollector(x)
+#    y.search_coulomb()
+#    print(y.G)
