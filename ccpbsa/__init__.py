@@ -113,12 +113,17 @@ def main():
 
         if cliargs.no_concoord:
             data.no_concoord()
+            search = DataCollector(data)
+            search.search_lj()
+            search.search_coulomb()
+            search.search_solvation()
+            search.search_area()
 
         else:
             data.fullrun()
+            search = DataCollector(data)
+            search.search_data()
 
-        search = DataCollector(data)
-        search.search_data()
         print("G values:")
         print(search.G)
         search.G.to_csv("G.csv")
@@ -137,6 +142,10 @@ def main():
         print("dG folded values:")
         print(search.dG)
         print("dG unfolded values (GXG):")
+
+        if cliargs.no_concoord:
+            search.dG_unfld['-TS'] = 0
+
         print(search.dG_unfld)
         search.dG.to_csv("dG_fold.csv")
         search.dG_unfld.to_csv("dG_unfold.csv")
