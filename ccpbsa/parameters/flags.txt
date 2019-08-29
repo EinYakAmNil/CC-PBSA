@@ -3,6 +3,7 @@
 [pdb2gmx]
 -ff=gromos53a6
 -water=none
+-ignh
 
 [editconf]
 -bt=cubic
