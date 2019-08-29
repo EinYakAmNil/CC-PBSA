@@ -116,9 +116,13 @@ def main():
             data.no_concoord()
             search = DataCollector(data)
             search.search_lj()
-            search.search_coulomb()
-            search.search_solvation()
+            search.search_electro()
             search.search_area()
+
+            for c in search.G.columns:
+                
+                for i in search.G_mean.index:
+                    search.G_mean.loc[i, c] = search.G.loc[i, c].mean()
 
         else:
             data.fullrun()
@@ -126,7 +130,7 @@ def main():
             search.search_data()
 
         print("G values:")
-        print(search.G)
+        print(search.G_mean)
         search.G.to_csv("G.csv")
         search.G_mean.to_csv("G_mean.csv")
 

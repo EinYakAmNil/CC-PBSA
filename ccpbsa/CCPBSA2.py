@@ -1074,7 +1074,8 @@ class DataCollector:
         """
         self.ddG["SOLV"] *= alpha
         self.ddG["COUL"] *= alpha
-        self.ddG["LJ"] *= beta
+        self.ddG["LJ (1-4)"] *= beta
+        self.ddG["LJ (SR)"] *= beta
         self.ddG["SAS"] *= gamma
         self.ddG["-TS"] *= tau
 
