@@ -105,7 +105,24 @@ def parse_flags(file_):
     parsed = [{i[0][1:-1]: flatten([j.split("=")  \
         for j in i[1:]])} for i in parsed]
 
-    return dict(i for dict_ in parsed for i in dict_.items())
+    parsed = dict(i for dict_ in parsed for i in dict_.items())
+
+    input_ = {}
+    for i, j in parsed.items():
+        npt = "\n".join(j[j.index(k)+1] for k in j if k == '<<<')
+
+        while '<<<' in j:
+
+            for k in j:
+                
+                if k == '<<<':
+                    idx = j.index(k)
+                    parsed[i].pop(idx)
+                    parsed[i].pop(idx)
+
+        input_[i] = bytes(npt, 'utf-8')
+
+    return parsed, input_
 
 
 def parse_mutations(file_):
@@ -204,21 +221,6 @@ def gmx(prog, **kwargs):
     gmx = subprocess.run(['gmx', '-quiet'] + prog, **kwargs)
 
     return gmx
-
-
-def minimize(
-    pdb2gmx,
-    editconf,
-    grompp,
-    mdrun,
-    **kwargs
-):
-    """Run a energy minimization starting from a .pdb file.
-    """
-    gmx(['pdb2gmx'] + pdb2gmx, **kwargs)
-    gmx(['editconf'] + editconf, **kwargs)
-    gmx(['grompp'] + grompp, **kwargs)
-    gmx(['mdrun'] + mdrun, **kwargs)
  
 
 def gro2pdb(gro, tpr, pdb, **kwargs):
@@ -302,7 +304,7 @@ class DataGenerator:
         self.wtpdb = os.getcwd() + "/" + wtpdb
         wtname = wtpdb.split('/')[-1]
         self.wt = wtname[:wtname.find(".pdb")]
-        self.flags = parse_flags(flags)
+        self.flags, self.input = parse_flags(flags)
         self.n = len(self)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.mut_df = parse_mutations(mutlist)
@@ -412,12 +414,25 @@ class DataGenerator:
         made and the chains specified in self.chains are minimized.
         """
         pdb = d.split("/")[-1] + ".pdb"
-        minimize(
-            self.flags['pdb2gmx'] + ['-f', pdb],
-            self.flags['editconf'],
-            self.flags['grompp'] + ['-c', 'out.gro'],
-            self.flags['mdrun'],
-            **self.pipe
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + ['-f', pdb],
+            **self.pipe,
+            input=self.input['pdb2gmx']
+        )
+        gmx(
+            ['editconf'] + self.flags['editconf'],
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + ['-c', 'out.gro'],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'],
+            **self.pipe,
+            input=self.input['mdrun']
         )
 
 
@@ -556,7 +571,13 @@ class DataGenerator:
         print("Minimizing starting structures")
         for d in tqdm(self.wds):
             os.chdir(d)
-            self.do_minimization(d)
+
+            try:
+                self.do_minimization(d)
+
+            except KeyError:
+                raise Exception("Missing flags for GROMACS, check flags file")
+
             os.chdir(self.maindir)
 
         print("Updating Structures.")
@@ -565,7 +586,13 @@ class DataGenerator:
         print("Generating CONCOORD structure ensembles.")
         for d in tqdm(self.wds):
             os.chdir(d)
-            self.do_concoord(d)
+
+            try:
+                self.do_concoord(d)
+                
+            except FileNotFoundError:
+                raise Exception("Your CONCOORD run failed!") 
+
             os.chdir(self.maindir)
 
         ensembles = self.wds.copy()
@@ -654,28 +681,57 @@ class AffinityGenerator(DataGenerator):
         unbounded proteins instead.
         """
         fn = self.grp1
-        minimize(
-            self.flags['pdb2gmx'] + [
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + [
                 '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
             ],
-            self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-            self.flags['grompp'] + [
-                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
-            ],
-            self.flags['mdrun'] + ['-deffnm', fn],
             **self.pipe
         )
-        fn = self.grp2
-        minimize(
-            self.flags['pdb2gmx'] + [
-                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+        gmx(
+            ['editconf'] + self.flags['editconf'] + [
+                '-f', fn+'.gro', '-o', fn+'.gro'
             ],
-            self.flags['editconf'] + ['-f', fn+'.gro', '-o', fn+'.gro'],
-            self.flags['grompp'] + [
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + [
                 '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
             ],
-            self.flags['mdrun'] + ['-deffnm', fn],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+            **self.pipe,
+            input=self.input['mdrun']
+        )
+
+        fn = self.grp2
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + [
+                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+            ],
             **self.pipe
+        )
+        gmx(
+            ['editconf'] + self.flags['editconf'] + [
+                '-f', fn+'.gro', '-o', fn+'.gro'
+            ],
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + [
+                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+            ],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+            **self.pipe,
+            input=self.input['mdrun']
         )
 
 
@@ -794,18 +850,39 @@ class AffinityGenerator(DataGenerator):
         """Calculate the interaction area of the wildtype protein.
         """
         sasa = ['sasa', '-s']
-        os.chdir(self.wds[0])
-        gmx(sasa + ['confout.gro'], input=b'0')
-        gmx(
-            sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
-            input=b'0',
-            **self.pipe
-        )
-        gmx(
-            sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
-            input=b'0',
-            **self.pipe
-        )
+
+        os.chdir(self.wt)
+
+        if len(self) > 0:
+
+            for i in range(1, len(self)+1):
+                os.chdir(str(i))
+                gmx(sasa + ['confout.gro'], input=b'0')
+                gmx(
+                    sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
+                    input=b'0',
+                    **self.pipe
+                )
+                gmx(
+                    sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
+                    input=b'0',
+                    **self.pipe
+                )
+                os.chdir('..')
+
+        else: 
+            gmx(sasa + ['confout.gro'], input=b'0')
+            gmx(
+                sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
+                input=b'0',
+                **self.pipe
+            )
+            gmx(
+                sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
+                input=b'0',
+                **self.pipe
+            )
+
         os.chdir(self.maindir)
 
 
@@ -1124,7 +1201,15 @@ class AffinityCollector:
 
         idx = next(os.walk('.'))[1]
         self.G_bound_mean = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+        self.G_grp1_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+        self.G_grp2_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
             index=idx
         )
 
@@ -1132,21 +1217,23 @@ class AffinityCollector:
             idx = pd.MultiIndex.from_tuples(
                 [(i, j) for i in idx for j in range(1, len(self)+1)]
             )
+
         self.G_bound = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
             index=idx
         )
         self.G_grp1 = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
             index=self.G_bound.index
         )
         self.G_grp2 = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
             index=self.G_bound.index
         )
+
         self.dG_bound = self.G_bound_mean.drop(self.wt)
         self.dG_unbound = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)'],
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
             index=self.dG_bound.index
         )
         self.ddG = pd.DataFrame(0.0,
@@ -1161,46 +1248,54 @@ class AffinityCollector:
         """Find the files in which the Lennard-Jones energies are supposed to
         be written in and save the parsed values in the respective self.G table.
         """
-        for d in self.G_bound.index:
-            os.chdir(d)
+        for i in self.G_bound.index:
 
-            files += [i for i in os.listdir() if i == 'lj.log']
-            self.G_bound['LJ'][d] = get_lj(files)
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
 
-            files += [i for i in os.listdir() if i == 'lj.log']
-            self.G_grp1['LJ'][d] = get_lj(files)
+            else:
+                os.chdir(i)
 
-            files += [i for i in os.listdir() if i == 'lj.log']
-            self.G_grp2['LJ'][d] = get_lj(files)
+            vals = next(get_lj('lj.log'))
+            self.G_bound['LJ (1-4)'][i] = vals[0]
+            self.G_bound['LJ (SR)'][i] = vals[1]
 
-            os.chdir(self.maindir)
+            vals = next(get_lj('%s_lj.log' % self.grp1))
+            self.G_grp1['LJ (1-4)'][i] = vals[0]
+            self.G_grp1['LJ (SR)'][i] = vals[1]
 
-    def search_coulomb(self):
-        """Find the files in which the Coulomb energies are supposed to be
-        written in and save the parsed values in the respective self.G table.
-        """
-        for d in self.G_bound.index:
-            os.chdir(d)
-            self.G_bound['COUL'][d] = get_coul(files)
-
-            self.G_grp1['COUL'][d] = get_coul(files)
-
-            self.G_grp2['COUL'][d] = get_coul(files)
+            vals = next(get_lj('%s_lj.log' % self.grp2))
+            self.G_grp2['LJ (1-4)'][i] = vals[0]
+            self.G_grp2['LJ (SR)'][i] = vals[1]
 
             os.chdir(self.maindir)
 
 
-    def search_solvation(self):
+    def search_electro(self):
         """Find the files in which the Solvation energies are supposed to be
         written in and save the parsed values in the respective self.G table.
         """
-        for d in self.G_bound.index:
-            os.chdir(d)
-            self.G_bound['SOLV'][d] = get_solv(files)
+        for i in self.G_bound.index:
 
-            self.G_grp1['SOLV'][d] = get_solv(files)
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
 
-            self.G_grp2['SOLV'][d] = get_solv(files)
+            else:
+                os.chdir(i)
+
+            vals = next(get_electro('solvation.log'))
+            self.G_bound['COUL'][i] = vals[0]
+            self.G_bound['SOLV'][i] = vals[1]
+
+            vals = next(get_electro('%s_solvation.log' % self.grp1))
+            self.G_grp1['COUL'][i] = vals[0]
+            self.G_grp1['SOLV'][i] = vals[1]
+
+            vals = next(get_electro('%s_solvation.log' % self.grp2))
+            self.G_grp2['COUL'][i] = vals[0]
+            self.G_grp2['SOLV'][i] = vals[1]
 
             os.chdir(self.maindir)
 
@@ -1211,12 +1306,26 @@ class AffinityCollector:
         """
         os.chdir(self.wt)
 
-        cmplx = get_area(cmplx)
-        grp1 = get_area(grp1)
-        grp2 = get_area(grp2)
+        if self.n > 0:
 
-        self.ddG['PPIS'] = grp1 + grp2 - cmplx
-        
+            for i in range(len(self)):
+                os.chdir(str(i+1))
+
+                cmplx = next(get_area("area.xvg"))
+                grp1 = next(get_area("%s_area.xvg" % self.grp1))
+                grp2 = next(get_area("%s_area.xvg" % self.grp2))
+
+                self.G_bound['PPIS'][i] = grp1 + grp2 - cmplx
+
+                os.chdir('..')
+
+        else:
+            cmplx = next(get_area("area.xvg"))
+            grp1 = next(get_area("%s_area.xvg" % self.grp1))
+            grp2 = next(get_area("%s_area.xvg" % self.grp2))
+
+            self.G_bound_mean['PPIS'] = grp1 + grp2 - cmplx
+ 
         os.chdir(self.maindir)
 
 
@@ -1225,11 +1334,19 @@ class AffinityCollector:
         Returns the DataFrame object.
         """
         self.search_lj()
-        self.search_coulomb()
-        self.search_solvation()
+        self.search_electro()
         self.search_area()
 
-        return self.G_bound, self.G_grp1, self.G_grp2
+        for c in self.G_bound.columns:
+ 
+            for i in self.G_bound_mean.index:
+                self.G_bound_mean.loc[i, c] = self.G_bound.loc[i, c].mean()
+                self.G_grp1_mean.loc[i, c] = self.G_grp1.loc[i, c].mean()
+                self.G_grp2_mean.loc[i, c] = self.G_grp2.loc[i, c].mean()
+
+        self.G_bound_mean['PPIS'] = self.G_bound.loc[self.wt, 'PPIS'].mean()
+
+        return self.G_bound_mean, self.G_grp1_mean, self.G_grp2_mean
 
 
     def daffinity(self):
@@ -1238,13 +1355,16 @@ class AffinityCollector:
         """
         for c in self.dG_bound.columns:
 
-            for i in self.mut_df.index:
+            for i in self.dG_bound.index:
                 self.dG_bound.loc[i, c] = \
-                    self.G_bound.loc[i, c] - self.G_bound.loc[self.wt, c]
+                    self.G_bound_mean.loc[i, c] - \
+                    self.G_bound_mean.loc[self.wt, c]
         
                 self.dG_unbound.loc[i, c] = \
-                    (self.G_grp1.loc[i, c] - self.G_grp1.loc[self.wt, c]) + \
-                    (self.G_grp2.loc[i, c] - self.G_grp2.loc[self.wt, c])
+                    (self.G_grp1_mean.loc[i, c] - \
+                    self.G_grp1_mean.loc[self.wt, c]) + \
+                    (self.G_grp2_mean.loc[i, c] - \
+                    self.G_grp2_mean.loc[self.wt, c])
 
 
     def ddaffinity(self):
@@ -1256,7 +1376,9 @@ class AffinityCollector:
                 self.ddG[c][i] = self.dG_bound[c][i] - self.dG_unbound[c][i]
 
         for i in self.ddG.index:
-            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":]) \
+                + self.G_bound_mean['PPIS'][0]
+            self.ddG['PPIS'][i] = self.G_bound_mean['PPIS'][0]
 
     
     def fitaffinity(self, alpha, beta, gamma, c, pka=0):
@@ -1265,7 +1387,8 @@ class AffinityCollector:
         """
         self.ddG["SOLV"] *= alpha
         self.ddG["COUL"] *= alpha
-        self.ddG["LJ"] *= beta
+        self.ddG["LJ (1-4)"] *= beta
+        self.ddG["LJ (SR)"] *= beta
         self.ddG["PPIS"] = gamma*self.ddG["PPIS"] + c
         self.ddG["PKA"] = pka
 
@@ -1304,7 +1427,7 @@ class GXG(DataGenerator, DataCollector):
         else:
             raise ValueError
         
-        self.flags = parse_flags(flags)
+        self.flags, self.input = parse_flags(flags)
         self.flags.setdefault("disco", []).extend(["-op", ""])
         self.chains = 'A'
         self.n = len(self)
@@ -1358,14 +1481,25 @@ class GXG(DataGenerator, DataCollector):
 
 
 if __name__ == '__main__':
-    x = AffinityGenerator(
-        "1cho.pdb",
-        'mut.txt',
-        '/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
-        'EFG',
+    x = GXG(
+#        "1cho.pdb",
+#        'mut.txt',
+        'gxgflags.txt',
+#        '/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
+#        'EFG',
         'parameters/energy.mdp',
         1,
+#        True
     )
-    x.fullrun()
+    x.create_table()
+#    print(x.flags)
+#    x.fullrun()
 #    y = AffinityCollector(x)
-
+#    y.search_data()
+#    print(y.G_bound_mean)
+#    y.daffinity()
+#    y.ddaffinity()
+#    print(y.dG_bound)
+#    print(y.dG_unbound)
+#    print(y.ddG)
+#    print(parse_flags("gxgflags.txt"))

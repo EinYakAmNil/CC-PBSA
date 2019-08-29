@@ -33,7 +33,7 @@ def main():
         default=pkgpath+'/parameters/flags.txt'
     )
     options.add_argument(
-        "--chains",
+        "-c", "--chains",
         help="Name of chains in the .pdb file for the first protein group. \
         Only needed in affinity calculation.",
         default='A',
@@ -179,6 +179,7 @@ def main():
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
         print("Initializing directory.")
+
         data = AffinityGenerator(
             wtpdb = cliargs.wildtype,
             mutlist = cliargs.mutations,
@@ -187,8 +188,12 @@ def main():
             spmdp = cliargs.energy_mdp,
             verbosity = verbose
         )
-        data.fullrun()
+        if cliargs.no_concoord:
+            data.no_concoord()
 
+        else:
+            data.fullrun()
+        
         search = AffinityCollector(data)
         search.search_data()
 
@@ -197,16 +202,16 @@ def main():
 
         print("G values:")
         print("bound")
-        print(search.G_bound)
-        search.G_bound.to_csv('G_bound.csv')
-        search.G_mean.to_csv("G_bound_mean.csv")
+        print(search.G_bound_mean)
+        search.G_bound_mean.to_csv('G_bound.csv')
+        search.G_bound_mean.to_csv("G_bound_mean.csv")
         print("unbound")
-        print(search.G_grp1)
+        print(search.G_grp1_mean)
         search.G_grp1.to_csv('G_grp1.csv')
-        search.G_grp1.to_csv('G_grp1_mean.csv')
-        print(search.G_grp2)
+        search.G_grp1_mean.to_csv('G_grp1_mean.csv')
+        print(search.G_grp2_mean)
         search.G_grp2.to_csv('G_grp2.csv')
-        search.G_grp2.to_csv('G_grp2_mean.csv')
+        search.G_grp2_mean.to_csv('G_grp2_mean.csv')
 
         print("dG values:")
         print("bound")
