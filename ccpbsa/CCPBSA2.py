@@ -427,13 +427,19 @@ class DataGenerator:
         """
         for d in self.wds:
             os.chdir(d)
+            pdb = d.split("/")[-1] + ".pdb"
             gro2pdb(
                 'confout.gro',
                 'topol.tpr',
-                d.split("/")[-1] + ".pdb",
+                pdb,
                 **self.pipe,
                 input=b'0'
             )
+#            Remove hydrogens for CONCOORD.
+            cmd.load(pdb)
+            cmd.remove('hydrogens')
+            cmd.save(pdb)
+            cmd.reinitialize()
 
             os.chdir(self.maindir)
 
