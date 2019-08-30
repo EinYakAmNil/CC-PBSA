@@ -566,7 +566,8 @@ class DataGenerator:
 
 
     def fullrun(self):
-        """Use all of the default behaviour to generate the data.
+        """Use all of the default behaviour to generate the data. Not supported
+        by multiprocessing. Just for quick tests within the library code.
         """
         print("Minimizing starting structures")
         for d in tqdm(self.wds):
@@ -618,7 +619,8 @@ class DataGenerator:
 
     def no_concoord(self):
         """Get energy values without running CONCOORD to ignore the flexibility
-        contribution to the energy term. Very fast alternative.
+        contribution to the energy term. Very fast alternative. Not supported
+        by multiprocessing.
         """
         self.n = 0
         print("Minimizing structures and extract values.")
@@ -676,7 +678,7 @@ class AffinityGenerator(DataGenerator):
         cmd.reinitialize()
 
 
-    def do_minimization(self):
+    def do_minimization_chains(self):
         """Go into all the directories and minimize the .pdb files of the
         unbounded proteins instead.
         """
@@ -735,7 +737,7 @@ class AffinityGenerator(DataGenerator):
         )
 
 
-    def single_point(self):
+    def single_point_chains(self):
         """Creates a single point .tpr file of the single groups.
         """
         gromppflags = self.flags['grompp'].copy()
@@ -762,7 +764,7 @@ class AffinityGenerator(DataGenerator):
         )
 
 
-    def electrostatics(self):
+    def electrostatics_chains(self):
         """Calcutlate the Coulomb and Solvation Energy based on the single
         point .tpr files of the chain groups. Parameters are stored in a
         separate file for gropbe. Reference it through the main parameter file
@@ -805,7 +807,7 @@ class AffinityGenerator(DataGenerator):
             print(gropbe.stdout.decode('utf-8'))
 
 
-    def lj(self):
+    def lj_chains(self):
         """Calculate the Lennard-Jones Energy based on the sp.tpr of the
         unbound proteins
         """
@@ -919,10 +921,10 @@ class AffinityGenerator(DataGenerator):
         for d in tqdm(self.wds):
             os.chdir(d)
             self.split_chains(d)
-            self.do_minimization()
-            self.single_point()
-            self.electrostatics()
-            self.lj()
+            self.do_minimization_chains()
+            self.single_point_chains()
+            self.electrostatics_chains()
+            self.lj_chains()
             os.chdir(self.maindir)
         
         self.area()
@@ -945,10 +947,10 @@ class AffinityGenerator(DataGenerator):
         for d in tqdm(self.wds):
             os.chdir(d)
             self.split_chains(d)
-            self.do_minimization()
-            self.single_point()
-            self.electrostatics()
-            self.lj()
+            self.do_minimization_chains()
+            self.single_point_chains()
+            self.electrostatics_chains()
+            self.lj_chains()
             os.chdir(self.maindir)
         
         self.area()
@@ -1478,26 +1480,3 @@ class GXG(DataGenerator, DataCollector):
         """
         self.fullrun()
         return self.search_data()
-
-
-if __name__ == '__main__':
-    x = AffinityGenerator(
-        "1cho.pdb",
-        'mut.txt',
-        'flags.txt',
-#        'gxgflags.txt',
-#        '/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
-        'EFG',
-        'parameters/energy.mdp',
-        1,
-#        True
-    )
-    x.fullrun()
-    y = AffinityCollector(x)
-    y.search_data()
-    print(y.G_bound_mean)
-    y.daffinity()
-    y.ddaffinity()
-    print(y.dG_bound)
-    print(y.dG_unbound)
-    print(y.ddG)

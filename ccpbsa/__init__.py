@@ -2,6 +2,7 @@ from .CCPBSA import *
 import argparse
 import os
 import sys
+from multiprocessing import Pool
 
 def main():
     pkgpath = __path__[0]
@@ -66,8 +67,16 @@ def main():
         generating structure ensembles with CONCOORD.",
         action='store_true'
     )
+    options.add_argument(
+        '--cores',
+        default=0,
+        help="Specify the number of cores to use for multiprocessing, takes \
+        the maximum amount available per default.",
+        type=int
+    )
 
     cliargs = cliparser.parse_args()
+    gxg_table = os.path.abspath(cliargs.gxg_table)
 
     if cliargs.routine == 'setup':
 
@@ -86,6 +95,9 @@ def main():
     else:
         verbose = 0
 
+    if cliargs.cores == 0:
+        cliargs.cores = multiprocessing.cpu_count()
+
     if cliargs.routine == 'gxg':
         print("Making a new GXG table.")
         print("Initializing directory.")
@@ -100,8 +112,6 @@ def main():
         G_sgl.to_csv('GXG_all_values.csv')
 
     if cliargs.routine == 'stability':
-        options = cliparser.add_argument_group("OPTIONS")
-        cliargs = cliparser.parse_args()
 
         print("Initializing directory.")
         data = DataGenerator(
@@ -112,8 +122,22 @@ def main():
             verbosity = verbose
         )
 
+        def multienergy(d):
+            os.chdir(d)
+            data.do_minimization(d)
+            data.single_point()
+            data.electrostatics()
+            data.lj()
+            data.area()
+            os.chdir(data.maindir)
+
+
         if cliargs.no_concoord:
-            data.no_concoord()
+
+            pool.map(multimini, data.wds)
+            pool.close()
+            pool.join()
+
             search = DataCollector(data)
             search.search_lj()
             search.search_electro()
@@ -125,7 +149,57 @@ def main():
                     search.G_mean.loc[i, c] = search.G.loc[i, c].mean()
 
         else:
-            data.fullrun()
+
+            def multimini(d):
+                os.chdir(d)
+
+                try:
+                    data.do_minimization(d)
+
+                except KeyError:
+                    raise Exception("Missing flags for GROMACS, check flags file")
+
+                os.chdir(data.maindir)
+
+            def multicoord(d):
+                os.chdir(d)
+
+                try:
+                    data.do_concoord(d)
+                    
+                except FileNotFoundError:
+                    raise Exception("Your CONCOORD run failed!") 
+
+                os.chdir(data.maindir)
+
+
+            def multropy(en):
+                os.chdir(en)
+                data.schlitter(en)
+                os.chdir(data.maindir)
+
+            pool.map(multimini, data.wds)
+            pool.close()
+            pool.join()
+
+            data.update_structs()
+
+            pool.map(multicoord, data.wds)
+            pool.close()
+            pool.join()
+
+            ensembles = data.wds.copy()
+            data.wds = [d+'/'+str(i) for d in data.wds \
+                    for i in range(1, len(data)+1)]
+
+            pool.map(multienergy, data.wds)
+            pool.close()
+            pool.join()
+
+            pool.map(multropy, data.wds)
+            pool.close()
+            pool.join()
+
             search = DataCollector(data)
             search.search_data()
 
@@ -144,7 +218,7 @@ def main():
             parameters = [l.split("=") for l in parameters]
             parameters = dict([(l[0], float(l[1])) for l in parameters])
 
-        search.dstability(cliargs.gxg_table)
+        search.dstability(gxg_table)
         print("dG folded values:")
         print(search.dG)
         print("dG unfolded values (GXG):")
@@ -188,11 +262,84 @@ def main():
             spmdp = cliargs.energy_mdp,
             verbosity = verbose
         )
+
+        def multienergy(d):
+            os.chdir(d)
+            data.do_minimization(d)
+            data.single_point()
+            data.electrostatics()
+            data.lj()
+            data.area()
+            os.chdir(data.maindir)
+
+        def multienergy_chains(d):
+            os.chdir(d)
+            data.split_chains(d)
+            data.do_minimization_chains()
+            data.single_point_chains()
+            data.electrostatics_chains()
+            data.lj_chains()
+            os.chdir(datdataindir)
+
         if cliargs.no_concoord:
-            data.no_concoord()
+            case = 3
+            pool.map(multienergy, data.wds)
+            pool.close()
+            pool.join()
+
+            pool.map(multienergy_chains, data.wds)
+            pool.close()
+            pool.join()
+
+            data.area()
 
         else:
-            data.fullrun()
+            case = 4
+
+            def multimini(d):
+                os.chdir(d)
+
+                try:
+                    data.do_minimization(d)
+
+                except KeyError:
+                    raise Exception("Missing flags for GROMACS, check flags file")
+
+                os.chdir(data.maindir)
+
+            def multicoord(d):
+                os.chdir(d)
+
+                try:
+                    data.do_concoord(d)
+                    
+                except FileNotFoundError:
+                    raise Exception("Your CONCOORD run failed!") 
+
+                os.chdir(data.maindir)
+
+            pool.map(multimini, data.wds)
+            pool.close()
+            pool.join()
+
+            data.update_structs()
+
+            pool.map(multicoord, data.wds)
+            pool.close()
+            pool.join()
+
+            data.wds = [d+'/'+str(i) for d in data.wds \
+                    for i in range(1, len(data)+1)]
+
+            pool.map(multienergy, data.wds)
+            pool.close()
+            pool.join()
+
+            pool.map(multienergy_chains, data.wds)
+            pool.close()
+            pool.join()
+
+            data.area()
         
         search = AffinityCollector(data)
         search.search_data()
@@ -230,3 +377,9 @@ def main():
         print("with fit:")
         print(search.ddG)
         search.ddG.to_csv('ddG_fit.csv')
+
+        return cliargs.cores, data, case
+
+
+mainout = main()
+pool = Pool(mainout[0])
