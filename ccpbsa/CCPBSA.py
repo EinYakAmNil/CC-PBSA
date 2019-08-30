@@ -551,7 +551,7 @@ class DataGenerator:
         gmx(trjcat+trrs, **self.pipe)
         gmx(
             covar+[self.maindir+'/'+en+"/topol.tpr"],
-            input=b'2\n2\n',
+            input=self.input['covar'],
             **self.pipe
         )
         entropy = gmx(
