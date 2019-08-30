@@ -1,28 +1,50 @@
-#!/Applications/PyMOL.app/Contents/bin/python3
-"""Code for CC/PBSA, a fast tool for estimating folding free energy
-differences.
-"""
-import glob
 import os
 import shutil
 import subprocess
-import numpy as np
+from tqdm import tqdm
 import pandas as pd
+import numpy as np
 import pymol
-pymol.finish_launching(['pymol', '-qc'])
+pymol.finish_launching(['pymol', '-Qc'])
 cmd = pymol.cmd
 
-ERRORSTR = """Bad energy values from unminimized structures.
-Change .minimized to True or run the minimize method first.
-"""
+def get_lj(*files):
+    """Get the tail of a list of log files to extract the mean value of the
+    Lennard-Jones Energy.
+    """
+    for f in files:
+        with open(f, 'r') as ljlog:
+            unparsed = ljlog.readlines()
+            onefour = next(i for i in unparsed if 'LJ-14' in i).split()[1]
+            sr = next(i for i in unparsed if 'LJ (SR)' in i).split()[2]
+
+            yield float(onefour), float(sr)
 
 
-def int_in_str(lst):
-    converted = ''.join([item for item in lst if item.isdigit()])
-    return int(converted)
+def get_electro(*files):
+    """Get the tail of a list of log files to extract the mean value of the
+    Coulomb Energy.
+    """
+    for f in files:
+        with open(f, 'r') as solvlog:
+            unparsed = solvlog.readlines()
+            coul = next(i for i in unparsed if 'Coulombic' in i).split()[6]
+            solv = next(i for i in unparsed if 'Solvation' in i).split()[5]
+
+            yield float(coul), float(solv)
+
+
+def get_area(*files):
+    for f in files:
+        with open(f, 'r') as arealog:
+            unparsed = arealog.readlines()
+            area = unparsed[-1].split()[1]
+
+            yield float(area)
+
 
 def log(fname, proc_obj):
-    """Used to log some of GROMACS output
+    """Write stdout and stderr of a process object to a file.
     """
     log_file = open(fname, 'a')
 
@@ -35,474 +57,475 @@ def log(fname, proc_obj):
     log_file.close()
 
 
-def gmx(prog, **kwargs):
-    """Uses the subprocess module to run a gmx (GROMACS) program. Returns the
-    process object. **kwargs will be passed to subprocess.run
+def int_in_str(*strings):
+    """Takes strings as input and tries to find integers in them. Used to find
+    the residue number in the mutation file.
+    Returns a list of the integers found.
     """
-    assert type(prog) == list, "Pass a list of arguments you would use after \
-        \"gmx -quiet\"."
+    converted = [''.join([item for item in str_ if item.isdigit()]) \
+        for str_ in strings]
+    return converted
+
+
+def flatten(lst=[]):
+    """Unpacks a nested list. Does not care about the deepness of nesting since
+    it calls itself recursively.
+    """
+    unpacked = []
+    for i in list(lst):
+        if type(i) is not str and type(i) is not int:
+            unpacked.extend(flatten(list(i)))
+
+        else:
+            unpacked.append(i)
+
+    return unpacked
+
+
+def parse_flags(file_):
+    """Parse the file containing the flags for CONCOORD and GROMACS. Returns a
+    list of dictionaries with each program as key for the flags.
+    """
+    raw = open(file_, 'r').readlines()
+    
+#    Strip lines of comments.
+    ignc = [i[:i.find(";")] for i in raw]
+    ignc = [i.strip() for i in ignc if len(i) > 0]
+    ignc = [i if i[0] != "[" else i for i in ignc ]
+
+#    Find where programs are defined.
+    progs = [i for i in ignc if i[0] == "["]
+    idx = [ignc.index(i) for i in progs]
+
+#    Pack program flags together with their program...
+    parsed = [ignc[i:idx[idx.index(i)+1]] for i in idx[:-1]]
+    parsed.append(ignc[idx[-1]:])
+
+#    ...and make them into a dictionary. For easy reference later on.
+    parsed = [{i[0][1:-1]: flatten([j.split("=")  \
+        for j in i[1:]])} for i in parsed]
+
+    parsed = dict(i for dict_ in parsed for i in dict_.items())
+
+    input_ = {}
+    for i, j in parsed.items():
+        npt = "\n".join(j[j.index(k)+1] for k in j if k == '<<<')
+
+        while '<<<' in j:
+
+            for k in j:
+                
+                if k == '<<<':
+                    idx = j.index(k)
+                    parsed[i].pop(idx)
+                    parsed[i].pop(idx)
+
+        input_[i] = bytes(npt, 'utf-8')
+
+    return parsed, input_
+
+
+def parse_mutations(file_):
+    """Returns a 3 dimensional pandas DataFrame of Mutations. Containing:
+        - chain
+        - amino acid (AA)
+        - residue(number)
+        - new amino acid (Mutation)
+    Each new protein stores the information in a new row.
+    Multiple mutations extend into the third dimension.
+    """
+    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+    aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU \
+            MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
+    aa123 = dict(zip(aa1,aa3))
+    raw = open(file_, 'r').readlines()
+    raw = [i for i in raw if i != '\n']
+
+#    Remove whitespaces and empty lines
+    raw = [i.replace(" ", "") for i in raw]
+    raw = [i[:-1].split(",") for i in raw]
+    maxmuts = max([len(i) for i in raw])
+    muts = [tuple(i + [""] * (maxmuts - len(i))) for i in raw]
+
+#    Index definition for the DataFrame.
+    headers = ["Chain", "AA", "Residue", "Mutation"]
+
+    mut_df = pd.DataFrame(
+        columns=headers,
+        index=pd.MultiIndex.from_tuples(muts)
+    )
+
+#    Fill the Chain column.
+    for i, j in enumerate(raw):
+        ext = maxmuts - len(j)
+
+        chains = [k.split("_")[0] if len(k.split("_")) == 2 else "" for k in j]
+        chains.extend([""] * ext)
+        mut_df["Chain"][i] = chains
+
+        aa = [k.split("_")[0][0] if len(k.split("_")) == 1 \
+                else k.split("_")[1][0] for k in j]
+        aa.extend([""] * ext)
+        mut_df["AA"][:][i] = aa
+
+        res = int_in_str(*j)
+        res.extend([""] * ext)
+        mut_df["Residue"][i] = res
+
+        muts = [aa123[k[-1]] for k in j]
+        muts.extend([""] * ext)
+        mut_df["Mutation"][i] = muts
+
+    return mut_df
+
+
+def concoord(pipe, input_, *pdb, **flags):
+    """Takes arbitrarily many .pdb files as input to generate structure
+    ensembles using CONCOORD. Additional flags can be passed via a dictionary
+    with the keys corresponding to the programs, i.e. \"dist\" and \"disco\".
+    Verbosity can be controlled via the keyword \"verbosity\" which takes
+    either 0 (do not show any messages) or 1 (show all messages).
+    Returns the two process objects of dist and disco.
+    """
+    for p in pdb:
+        os.chdir("/".join([i for i in p.split("/")[:-1]]+["."]))
+        
+        dist_input = [
+            'dist',
+            '-p', p,
+        ]
+        if 'dist' in flags.keys():
+            dist_input.extend(flags['dist'])
+
+        disco_input = [
+            'disco'
+        ]
+        if 'disco' in flags.keys():
+            disco_input.extend(flags['disco'])
+        
+        dist = subprocess.run(
+            dist_input,
+            input=input_,
+            stdout=pipe,
+            stderr=pipe
+        )
+        disco =subprocess.run(disco_input, stdout=pipe, stderr=pipe)
+
+        return dist, disco
+
+
+def gmx(prog, **kwargs):
+    """Run a GROMACS program with its flags by passing them in a list object.
+    kwargs are passed to the subprocess.run method.
+    """
     gmx = subprocess.run(['gmx', '-quiet'] + prog, **kwargs)
 
     return gmx
+ 
+
+def gro2pdb(gro, tpr, pdb, **kwargs):
+    """Replace the original .pdb file by a .gro file. Preserves chains.
+    Requires the originial .pdb file to still be there.
+    """
+    cmd.load(pdb)
+    ori = cmd.get_chains()
+    cmd.reinitialize()
+    trjconv = gmx(
+        ['trjconv', '-f', gro, '-s', tpr, '-o', pdb],
+        **kwargs
+#        input=b'0',
+#        stdout=pipe,
+#        stderr=pipe
+    )
+    cmd.load(pdb)
+    replace = cmd.get_chains()
+
+    for n, c in enumerate(ori):
+        cmd.alter('chain %s' % replace[n], 'chain="%s"' % c)
+
+    cmd.save(pdb)
+    cmd.reinitialize()
+
+    return trjconv
 
 
-def makedir(dirname):
-    if not os.path.isdir(dirname):
-        os.mkdir(dirname)
+def filecheck(*strs):
+    """Checks whether or not a string is a valid path to a file. Relative or
+    absolute path does not matter. Yields the absolute path if the file was
+    found
+    """
+    start = os.getcwd()
 
-    else:
-        print("Directory \"%s\" already exists. Ignoring this function call!" %
-            dirname)
-        pass
+    for s in strs:
+        splt = s.split("/")
+        f = splt[-1]
+        p = "/".join(splt[:-1]+["."])
 
+        try:
+            os.chdir(p)
 
-def unpack(lst=[]):
-	"""Unpacks a nested list. Does not care about the deepness of nesting since
-		it calls itself recursively.
-	"""
-	unpacked = []
-	for i in lst:
-		if type(i) is list:
-			unpacked.extend(unpack(i))
+            if f in os.listdir():
+                yield s, os.getcwd() + "/" + f
 
-		else:
-			unpacked.append(i)
+        except FileNotFoundError:
+            pass
 
-	return unpacked
+        os.chdir(start)
 
 
 class DataGenerator:
-    """Main class containing the methods to generate the data for CC/PBSA.
-    Creates a directory with the name of the wildtype (wt) protein and
-    subdirectories for each structure ensemble (wt and mutant). If the concoord
-    method was called, then each subdirectory will have another layer of
-    subdirectories for the individual GROMACS runs.The user will have to pass
-    the wt protein .pdb file, a list of mutations, a parameter file containing
-    the flags for each programm (CONCOORD/GROMACS) and optionally user specific
-    .mdp files and tables for GROMACS.
+    """Main class to make CC/PBSA work. Creates a directory with the name of
+    the wildtype (wt) protein and subdirectories for each structure ensemble.
     """
-    def __init__(self,
-        wt,
-        mutlist,
-        flags,
-        calculate,
-        chains,
-        min_mdp,
-        energy_mdp,
-        mdrun_table,
-        pbeparams
+    def __init__(
+        self,
+        wtpdb, # wild type .pdb file
+        mutlist, # list of mutations
+        flags, # file specifying the flags for CONCOORD and GROMACS
+        spmdp,
+        verbosity=0,
+        dummy=False
     ):
-        """Creates and moves to the main folder upon initialization and copies
-        the wt .pdb file into a subdirectory of the working directory.
-        self.maindir will be the directory to which each function call returns
-        to after completing.
+        if verbosity == 0:
+            self.pipe = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
+
+        elif verbosity == 1:
+            self.pipe = {
+                'stdout': None,
+                'stderr': None
+            }
+
+        else:
+            raise ValueError
+
+        self.wtpdb = os.getcwd() + "/" + wtpdb
+        wtname = wtpdb.split('/')[-1]
+        self.wt = wtname[:wtname.find(".pdb")]
+        self.flags, self.input = parse_flags(flags)
+        self.n = len(self)
+        self.flags.setdefault("disco", []).extend(["-op", ""])
+        self.mut_df = parse_mutations(mutlist)
+        self.wds = [self.wt]
+        self.wds.extend(["+".join([j for j in i if len(j) > 0]) \
+            for i in self.mut_df.index])
+
+        cmd.load(self.wtpdb)
+        self.chains = cmd.get_chains()
+        cmd.reinitialize()
+
+        if not dummy:
+            self.initdir(spmdp)
+            self.do_mutate()
+
+        else:
+            self.maindir = os.getcwd() + '/' + self.wt
+
+        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
+
+
+    def initdir(self, spmdp):
+        """Creates the directory and filesystem for the structures, called
+        automatically by __init__ if not surpressed.
         """
-#        Attributes on which other classes depend on are marked by empty comment
-        self.mode = calculate #
-        self.wt = wt #
-        self.flags = self.parse_flags(flags)
-        self.mut_df = self.parse_mutlist(mutlist) #
+#        Create the directory for data generation.
+        try:
+            os.mkdir(self.wt)
+            os.chdir(self.wt)
 
-        self.e_mdp = energy_mdp
-        self.min_mdp = min_mdp
-        self.mdrun_table = mdrun_table
-        self.pbeparams = pbeparams
+        except FileExistsError:
+            newdir = input("Directory already exists. Enter a new name:\n")
+            os.mkdir(newdir)
+            os.chdir(newdir)
 
-#        Parameters to indicate the state of the structures.
-        self.minimized = False
-        self.chains = chains
-
-#        Initialize working directory.
-        makedir(self.__repr__())
-        shutil.copy(self.wt, self.__repr__())
-        os.chdir(self.__repr__())
         self.maindir = os.getcwd()
-        makedir(self.__repr__())
-        self.wt = self + ".pdb"
-        shutil.move(self.wt, self.__repr__())
-        self.wdlist = [self.maindir+'/'+self.__repr__()] #
+        os.mkdir(self.wt)
+        shutil.copy(self.wtpdb, self.wt)
 
+        for k, v in self.flags.items():
+            files = list(i for i in filecheck(*v))
 
-    def __repr__(self):
-        return self.wt.split('/')[-1][:-4]
+            for ori, abs_ in files:
+                shutil.copy(abs_, self.maindir)
+                v[v.index(ori)] = self.maindir+"/"+abs_.split("/")[-1]
+                self.flags[k] = v
 
+#        Copy all parameter files into the main directory. And update new file
+#        locations.
+        os.chdir('..')
 
-    def __add__(self, other):
-        """Makes it possible to add this object to strings. Not much else makes
-        sense at the moment and it makes some of the source syntax more
-        readable.
-        """
-        return self.__repr__() + other
+        shutil.copy(spmdp, self.maindir)
+
+        os.chdir(self.maindir)
 
 
     def __len__(self):
-        """Returns the number of structures that would be generated by
+        """Returns the number of structures that should be generated by
         CONCOORD.
         """
-        return int(self.flags['CC']['DISCO FLAGS'] \
-            [self.flags['CC']['DISCO FLAGS'].index('-n')+1])
+        try:
+            n_idx = self.flags['disco'].index('-n')
+            return int(self.flags['disco'][n_idx+1])
+
+        except ValueError:
+            return 300
 
 
-    def parse_flags(self, flags_raw):
-        """Parse the list of flags in the .txt flag file for the programs.
-        Called upon initialization. Returns a
-        dictionary in the following format:
-
-        parsed_flags = {
-            'CC': {
-                'DIST FLAGS': [list of flags],
-                'DISCO FLAGS': [list of flags]
-            },
-            'gmx': {
-                'PDB2GMX FLAGS': [list of flags],
-                'EDITCONF FLAGS': [list of flags],
-                'GROMPP FLAGS': [list of flags],
-                'MDRUN FLAGS': [list of flags],
-            }
-        }
-        
-        The list can then be extended directly to other input lists for
-        subprocess.run().
+    def do_mutate(self):
+        """Create directories for each mutation and save the .pdb file in
+        there. Requires the mut_df attribute.
         """
-        parsed_flags = {
-            'CC': {
-                'DIST FLAGS': [],
-                'DISCO FLAGS': []
-            },
-            'gmx': {
-                'PDB2GMX FLAGS': [],
-                'EDITCONF FLAGS': [],
-                'GROMPP FLAGS': [],
-                'MDRUN FLAGS': [],
-            }
-        }
-
-#        Search for this file just in case it is not in the current directory of
-#        the class.
-        flag_file = list(open(flags_raw, 'r'))
-        content = [line[:line.index('\n')] for line in flag_file]
-        uncommented = []
-
-        for line in content:
-            if ';' in line:
-                line = line[:line.index(';')]
-
-            if len(line) > 0:
-                uncommented.append(' '.join(line.split()))
-
-    #    Indexes the file for where the flags are defined
-        idx = [uncommented.index(j) for i in parsed_flags.values() for j in i]
-        idx.append(len(uncommented))
-
-        i = 0
-        for keys, vals in parsed_flags.items():
-
-            for prog in vals:
-                parsed_flags[keys][prog] = unpack([i.split('=') for i in \
-                    uncommented[idx[i]+1:idx[i+1]]])
-                i += 1
-    
-        return parsed_flags
-
-
-    def parse_mutlist(self, mutlist_raw):
-        """Parse the list of mutations so that .mutate() can perform mutations
-        using PyMOL correctly. Called upon initialization.
-        The format of the mutation instruction should be (in one letter code
-        and without spaces):
-            (*Chain_*) *OriginalAA* *ResidueNumber* *NewAA*
-        for exapmle:
-            - A20G (for a monomer)
-            - B_H10I (for a dimer with a chain named \"B\")
-        """
-#        One letter AA code to three letter code as presented on PyMOL Wiki.
-        aa1 = list("ACDEFGHIKLMNPQRSTVWY")
-        aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU \
-            MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
-        aa123 = dict(zip(aa1,aa3))
-
-        mut_lst = list(open(mutlist_raw, 'r'))
-        mut_lst = [mut.split('\n')[0] for mut in mut_lst]
-
-#        Returned object is a pandas dataframe.
-        parsed_mut = pd.DataFrame(
-            columns=["Chain", "AA", "Residue", "Mutation"], index=mut_lst)
-
-        parsed_mut['Chain'] = [i[0] if '_' in i else '' for i in mut_lst.copy()]
-        parsed_mut['AA'] = [i[0] if '_' not in i else i[i.index('_')+1] \
-            for i in mut_lst.copy()]
-        parsed_mut['Residue'] = [int_in_str(i) for i in mut_lst]
-        parsed_mut['Mutation'] = [aa123[i[-1]] for i in mut_lst]
-
-        return parsed_mut
-
-
-    def mutate(self):
-        """Uses PyMOL and the list of mutations to mutate the wildtype protein.
-        Does not accuratly mutate if input structure or mutation instructions
-        are flawed. WARNING: No specific message is given if that happens. Best
-        to check if the residues in the .pdb file are correctly numbered.
-        Updates working directories list (wdlist).
-        """
-        for m in range(len(self.mut_df)):
-            cmd.load(self+'/'+self.wt)
+        for i in range(len(self.mut_df.index)):
+            cmd.load(self.wtpdb)
             cmd.wizard('mutagenesis')
-            mut_key = self.mut_df.axes[0][m]
-            cmd.get_wizard().do_select('///%s/%s' %
-                (self.mut_df["Chain"][m], str(self.mut_df["Residue"][m])))
-            cmd.get_wizard().set_mode(self.mut_df["Mutation"][m])
-            cmd.get_wizard().apply()
-            cmd.save(mut_key + ".pdb")
+
+            for j in range(len(self.mut_df["Residue"][i])):
+                cmd.get_wizard().do_select('///%s/%s' % (
+                    self.mut_df["Chain"][i][j],
+                    self.mut_df["Residue"][i][j],
+                ))
+                cmd.get_wizard().set_mode(self.mut_df["Mutation"][i][j])
+                cmd.get_wizard().apply()
+
+            os.mkdir(self.wds[i+1])
+            cmd.save(self.wds[i+1] + "/" + self.wds[i+1] + ".pdb")
             cmd.reinitialize()
-            makedir(mut_key)
-            shutil.move(mut_key + ".pdb", mut_key)
-            self.wdlist.append(self.maindir+'/'+mut_key)
 
 
-    def gmx2pdb(self, gro='confout.gro'):
-        """Use gmx trjconv to turn by default a confout.gro file back into a
-        .pdb file. Used as a step before CONCOORD, to avoid bad starting
-        structures.
+    def do_concoord(self, d):
+        """Goes into the directories listed in self.wds and generates
+        structure ensembles using CONCOORD. Each generated structure has its on
+        directory one level down the directoy tree. Updates self.wds with the
+        new structures
         """
-        for d in self.wdlist:
+        pdb = d.split("/")[-1] + ".pdb"
+        concoord(self.pipe['stdout'], self.input['dist'], pdb, **self.flags)
+
+        for i in range(1, len(self)+1):
+            os.mkdir(str(i))
+            shutil.move(str(i) + '.pdb', str(i))
+
+
+    def do_minimization(self, d):
+        """Do energy minimization on the structures in self.wds. If the
+        affinity is to be calculated, then an index file for the chains will be
+        made and the chains specified in self.chains are minimized.
+        """
+        pdb = d.split("/")[-1] + ".pdb"
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + ['-f', pdb],
+            **self.pipe,
+            input=self.input['pdb2gmx']
+        )
+        gmx(
+            ['editconf'] + self.flags['editconf'],
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + ['-c', 'out.gro'],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'],
+            **self.pipe,
+            input=self.input['mdrun']
+        )
+
+
+    def update_structs(self):
+        """Use gro2pdb to convert (minimized) confout.gro files into .pdb files
+        with the same name as the directory.
+        """
+        for d in self.wds:
             os.chdir(d)
-            fpf = d.split('/')[-1] + '.pdb'
-            trjconv = ['trjconv', '-s', gro, '-o', fpf]
-            gmx(trjconv, input=b'0')
+            pdb = d.split("/")[-1] + ".pdb"
+            gro2pdb(
+                'confout.gro',
+                'topol.tpr',
+                pdb,
+                **self.pipe,
+                input=b'0'
+            )
+#            Remove hydrogens for CONCOORD.
+            cmd.load(pdb)
+            cmd.remove('hydrogens')
+            cmd.save(pdb)
+            cmd.reinitialize()
 
             os.chdir(self.maindir)
 
 
-    def concoord(self):
-        """Performs the CONCOORD procedure to generate protein structure
-        ensembles. Takes additional flags from "flag_parse" as input (pass it
-        as "flag_parse_output['CC']"). Make sure that \"CONCOORDRC.bash\" is
-        sourced.
+    def single_point(self):
+        """Creates a single point .tpr file.
         """
-        for d in self.wdlist:
-            os.chdir(d)
-            fpf = d.split('/')[-1] # fpf stands for file prefix
-            dist_input = [
-                'dist',
-                '-p', '%s' % fpf+'.pdb',
-                '-op', '%s_dist.pdb' % fpf,
-                '-og', '%s_dist.gro' % fpf,
-                '-od', '%s_dist.dat' % fpf,
-            ]
-    
-            disco_input = [
-                'disco',
-                '-d', '%s_dist.dat' % fpf,
-                '-p', '%s_dist.pdb' % fpf,
-                '-op', '',
-                '-or', '%s_disco.rms' % fpf,
-                '-of', '%s_disco_Bfac.pdb' % fpf
-            ]
-            dist_input.extend(self.flags['CC']['DIST FLAGS'])
-            disco_input.extend(self.flags['CC']['DISCO FLAGS'])
-            subprocess.run(dist_input, input=b'1\n1')
-            subprocess.run(disco_input)
-            
-            for n in range(1, len(self)+1):
-                nr = str(n)
-                makedir(nr)
-#                shutil.copy(fpf+'.pdb', nr+'/'+nr+'.pdb')
-                shutil.move(nr+'.pdb', nr)
-
-            os.chdir(self.maindir)
-
-        self.wdlist = [d+'/'+str(n) \
-            for d in self.wdlist for n in range(1, len(self)+1)]
+        gromppflags = self.flags['grompp'].copy()
+        idx = gromppflags.index('-f')
+        gromppflags.pop(idx)
+        gromppflags.pop(idx)
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', 'confout.gro',
+                '-o', 'sp.tpr',
+            ] + gromppflags,
+            **self.pipe
+        )
 
 
-    def minimize(self):
-        """Minimzes all .pdb files in self.wdlist. Parameters for minimization
-        are set at the creation of the object. Default .mdp and .xvg tables are
-        given, but can be changed if another path is specified.
+    def electrostatics(self):
+        """Calculate the Coulomb and Solvation Energies of structures of the
+        specified .tpr file prefix in the directories. By default the file
+        should be named sp (Single Point).
+        Parameters for this are stored in a separate file for gropbe. Reference
+        it through the main parameter file for CC/PBSA.
         """
-        for d in self.wdlist:
-            os.chdir(d)
-            fpf = d.split('/')[-1]
-            gmxprocs = [
-                ['pdb2gmx', '-f', fpf+'.pdb'],
-                ['editconf'],
-                ['grompp', '-f', self.min_mdp],
-                ['mdrun', \
-                    '-tablep', self.mdrun_table, '-table', self.mdrun_table]
-            ]
-            gmxprocs = [unpack(list(proc)) \
-                for proc in zip(gmxprocs, self.flags['gmx'].values())]
+        chainselec = ",".join(str(i) for i in range(len(self.chains)))
 
-            for proc in gmxprocs:
-                gmx(proc)
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
 
-            if self.mode == 'affinity':
-                chain_selection = [b'chain %b\n' % bytes(c, 'utf-8') for c in self.chains]
-                chain_selection = b''.join(chain_selection) + b'q\n'
-                gmx(['make_ndx', '-f', 'topol.tpr'], input=chain_selection)
-#
-                for cn in range(len(self.chains)):
-                    select = bytes(str(10+cn), 'utf-8')
-                    chainbox = "chain_%s.gro" % self.chains[cn]
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,sp.tpr)")
 
-                    trjconv_select = [
-                        'trjconv', '-f', 'out.gro',
-                        '-n', 'index.ndx',
-                        '-o', chainbox
-                    ]
-                    gmx(trjconv_select, input=select)
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        gropbe.stderr = None
+        log("solvation.log", gropbe)
 
-#                    Create the run file for the chain and minimize it.
-                    chaintpr = "chain_%s.tpr"  % self.chains[cn]
-
-#                    Change topology file for grompp and mdrun.
-                    with open("topol.top", 'r') as topl:
-                        l = topl.readlines()
-
-                    topline = cn-len(self.chains)
-                    l[-len(self.chains):] = [';' + line if line != l[topline] \
-                            else line for line in l[-len(self.chains):]]
-
-                    with open("topol.top", 'w') as topl:
-                        topl.writelines(l)
-
-                    gmx(gmxprocs[2] + ['-c', chainbox, '-o', chaintpr])
-                    gmx(gmxprocs[3] + ['-s', chaintpr, '-deffnm',
-                        "chain_%s_confout" % self.chains[cn]])
-
-#                    Revert the changes in the topol.top file.
-                    l[-len(self.chains):] = [line[1:]  if line != l[topline] \
-                            else line for line in l[-len(self.chains):]]
-
-                    with open("topol.top", 'w') as topl:
-                        topl.writelines(l)
-
-            os.chdir(self.maindir)
-
-        self.minimized = True
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout.decode('utf-8'))
 
 
-    def solvation_energy(self):
-        """Uses gropbe for calculating the solvation and Coulomb energy.
-        Requires an additional parameters file for epsilon r which .tpr file
-        and so on. The run input file line should be left empty since this
-        method will specify it for every structure. This method can only be run
-        after there is a \"sp.tpr\" (single point) file, i.e. after the lj()
-        method, since topol.tpr is still the unminimized structure.
+    def lj(self):
+        """Calculate the Lennard-Jones Energy based on a sp.tpr
         """
-#        assert self.minimized == True, ERRORSTR
-        
-        for d in self.wdlist:
-            os.chdir(d)
-            intpr = "in(tpr,%s)" % (d+'/sp.tpr\n')
+        gmx(
+            [
+                'mdrun', '-s', 'sp.tpr',
+                '-rerun', 'confout.gro',
+                '-deffnm', 'sp',
+                '-nt', '1'
+            ],
+            **self.pipe
+        )
+        lj = gmx(
+            ['energy', '-f', 'sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        lj.stderr = None
+        log("lj.log", lj)
 
-            with open(self.pbeparams, 'r') as pbeparams:
-                lines = pbeparams.readlines()
-
-            with open("gropbe.txt", 'w') as pbeparams:
-                pbeparams.writelines([intpr]+lines)
-
-            gropbe = ['gropbe', "gropbe.txt"]
-            
-            input_ = ",".join([str(i) for i in range(len(self.chains))])
-            solv = subprocess.run(gropbe, input=bytes(input_, 'utf-8'),
-                stdout=subprocess.PIPE)
-            log("solvation.log", solv)
-
-            if self.mode == 'affinity':
-
-                for cn in range(len(self.chains)):
-                    chaintpr ="chain_%s.tpr" % self.chains[cn]
-
-                    with open(self.pbeparams, 'r') as pbeparams:
-                        lines = pbeparams.readlines()
-
-                    with open("gropbe.txt", 'w') as pbeparams:
-                        pbeparams.writelines(["in(tpr,%s)" % chaintpr] + lines)
-
-                    gropbe = ['gropbe', "gropbe.txt"]
-                    solv = subprocess.run(gropbe, input=b'0',
-                        stdout=subprocess.PIPE)
-                    log("solvation_%s.log" % self.chains[cn], solv)
-
-            os.chdir(self.maindir)
-
-
-    def coulomb_lj(self):
-        """calculates the single point Lennard Jones Energy (1-4 and
-        shortrange) of all self.structures.
-        """
-        assert self.minimized == True, ERRORSTR
-
-        for d in self.wdlist:
-            os.chdir(d)
-
-            gmxprocs = [
-                ['grompp', '-f', self.e_mdp, '-c', "confout.gro", '-o', 'sp.tpr'],
-                ['mdrun', '-s', 'sp.tpr',
-                    '-rerun', "confout.gro",
-                    '-deffnm', 'sp']
-            ]
-
-            gmxprocs = [unpack(list(proc)) \
-                for proc in zip(gmxprocs, list(self.flags['gmx'].values())[-2:])]
-
-            for proc in gmxprocs:
-                gmx(proc)
-
-            coulomb = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
-                input=b'6 8', stdout=subprocess.PIPE)
-            log("coulomb.log", coulomb)
-            lj = gmx(['energy', '-f', 'sp.edr', '-sum', 'yes'],
-                input=b'5 7', stdout=subprocess.PIPE)
-            log("lj.log", lj)
-
-            if self.mode == 'affinity':
-
-                for cn in range(len(self.chains)):
-                    ccout = "chain_%s_confout.gro" % self.chains[cn]
-                    chaintpr = "chain_%s_lj.tpr"  % self.chains[cn]
-
-                    with open("topol.top", 'r') as topl:
-                        l = topl.readlines()
-
-                    topline = cn-len(self.chains)
-                    l[-len(self.chains):] = [';' + line if line != l[topline] \
-                            else line for line in l[-len(self.chains):]]
-
-                    with open("topol.top", 'w') as topl:
-                        topl.writelines(l)
-
-                    gmxprocs = [
-                        ['grompp', '-f', self.e_mdp, '-c', ccout, '-o', chaintpr],
-                        ['mdrun', '-s', chaintpr, '-rerun', ccout,
-                            '-deffnm', "chain_%s_sp" % self.chains[cn]]
-                    ]
-
-                    gmxprocs = [unpack(list(proc)) \
-                        for proc in zip(gmxprocs,
-                            list(self.flags['gmx'].values())[-2:])]
-
-                    for proc in gmxprocs:
-                        gmx(proc)
-
-                    coulomb = gmx(['energy',
-                        '-f', 'chain_%s_sp.edr' % self.chains[cn],
-                        '-sum', 'yes'], input=b'5 6 7 8', stdout=subprocess.PIPE)
-                    log("chain_%s_coulomb.log" % self.chains[cn], coulomb)
-                    lj = gmx(['energy',
-                        '-f', 'chain_%s_sp.edr' % self.chains[cn],
-                        '-sum', 'yes'], input=b'5 6 7 8', stdout=subprocess.PIPE)
-                    log("chain_%s_lj.log" % self.chains[cn], lj)
-
-#                    Revert the changes in the topol.top file.
-                    l[-len(self.chains):] = [line[1:]  if line != l[topline] \
-                            else line for line in l[-len(self.chains):]]
-
-                    with open("topol.top", 'w') as topl:
-                        topl.writelines(l)
-
-            os.chdir(self.maindir)
+        if self.pipe['stdout'] == None:
+            print(lj.stdout.decode('utf-8'))
 
 
     def area(self):
@@ -511,77 +534,429 @@ class DataGenerator:
         ensemble will be used and the values for the interaction surface will
         be written into the .xvg file
         """
-        assert self.minimized == True, ERRORSTR
-
-        sasa = ['sasa', '-s', 'confout.gro']
-
-        for d in self.wdlist:
-            os.chdir(d)
-
-            if self.mode == 'affinity':
-                gmx(sasa + ['-n', 'index.ndx', '-output', '10', '11'],
-                    input=b'0')
-
-            else:
-                gmx(sasa, input=b'0')
-
-            os.chdir(self.maindir)
+        gmx(['sasa', '-s', 'confout.gro'], input=b'0', **self.pipe)
 
 
-    def schlitter(self):
+    def schlitter(self, en):
         """Calculates an upper limit of the entropy according to Schlitter's
         formula. Used in .fullrun() if the mode is stability
         """
-        assert self.minimized == True, ERRORSTR
         trjcat = ['trjcat', '-cat', 'yes', '-f']
-        covar = ['covar', '-f', 'trajout.xtc', '-nofit', '-nopbc', '-s']
-        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy']
-        ensembles = unpack([self.__repr__(), list(self.mut_df.index)])
-        ensembles = [i for i in ensembles if i != None]
+        covar = ['covar', '-f', 'trajout.xtc', '-nopbc', '-s']
+        anaeig = ['anaeig', '-v', 'eigenvec.trr', '-entropy', '-s']
 
-        for en in ensembles:
-            os.chdir(en)
-            trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
-                for n in range(len(self))]
+        trrs = [self.maindir+'/'+en+'/%d/traj.trr' % (n+1)
+            for n in range(len(self))]
 
-            gmx(trjcat+trrs)
-            gmx(covar+[self.maindir+'/'+en+"/1/confout.gro"], input=b'0')
-            entropy = gmx(anaeig, stdout=subprocess.PIPE)
-            log('entropy.log', entropy)
+        gmx(trjcat+trrs, **self.pipe)
+        gmx(
+            covar+[self.maindir+'/'+en+"/topol.tpr"],
+            input=b'2\n2\n',
+            **self.pipe
+        )
+        entropy = gmx(
+            anaeig + [self.maindir+'/'+en+"/topol.tpr"],
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        log('entropy.log', entropy)
 
-            os.chdir(self.maindir)
+        if self.pipe['stdout'] == None:
+            print(entropy.stdout.decode('utf-8'))
 
 
     def fullrun(self):
-        """Performs a full run based on the list of mutations, number of
-        CONCOORD structures and other parameters. Methods used will depend on
-        the mode chosen (stability/affinity).
+        """Use all of the default behaviour to generate the data.
         """
-        if self.mode == 'stability':
-            self.mutate()
-            self.minimize()
-            self.gmx2pdb()
-            self.concoord()
-            self.minimize()
-            self.coulomb_lj()
-            self.solvation_energy()
-            self.area()
-            self.schlitter()
+        print("Minimizing starting structures")
+        for d in tqdm(self.wds):
+            os.chdir(d)
 
-        elif self.mode == 'affinity':
-            self.mutate()
-            self.minimize()
-            self.gmx2pdb()
-            self.concoord()
-            self.minimize()
-            self.coulomb_lj()
-            self.solvation_energy()
+            try:
+                self.do_minimization(d)
+
+            except KeyError:
+                raise Exception("Missing flags for GROMACS, check flags file")
+
+            os.chdir(self.maindir)
+
+        print("Updating Structures.")
+        self.update_structs()
+
+        print("Generating CONCOORD structure ensembles.")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+
+            try:
+                self.do_concoord(d)
+                
+            except FileNotFoundError:
+                raise Exception("Your CONCOORD run failed!") 
+
+            os.chdir(self.maindir)
+
+        ensembles = self.wds.copy()
+        self.wds = [d+'/'+str(i) for d in self.wds \
+                for i in range(1, len(self)+1)]
+
+        print("Minimizing structures and extract values.")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.do_minimization(d)
+            self.single_point()
+            self.electrostatics()
+            self.lj()
             self.area()
+            os.chdir(self.maindir)
+
+        print("Calculating Entropy of structure ensembles.") 
+        for en in tqdm(ensembles):
+            os.chdir(en)
+            self.schlitter(en)
+            os.chdir(self.maindir)
+
+
+    def no_concoord(self):
+        """Get energy values without running CONCOORD to ignore the flexibility
+        contribution to the energy term. Very fast alternative.
+        """
+        self.n = 0
+        print("Minimizing structures and extract values.")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.do_minimization(d)
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            self.area()
+            os.chdir(self.maindir)
+        
+
+class AffinityGenerator(DataGenerator):
+    """Subclassed from DataGenerator to add additional procedures to calculate
+    the affinity changes in mutated proteins
+    """
+    def __init__(
+        self,
+        wtpdb,
+        mutlist,
+        flags,
+        chaingrp,
+        spmdp,
+        verbosity=0,
+        dummy=False
+    ):
+        self.grp1 = chaingrp
+        cmd.load(wtpdb)
+        self.chains = cmd.get_chains()
+        self.grp2 = "".join([c for c in cmd.get_chains() if c not in chaingrp])
+        cmd.reinitialize()
+        super().__init__(
+           wtpdb=wtpdb,
+           mutlist=mutlist,
+           flags=flags,
+           spmdp=spmdp,
+           verbosity=verbosity,
+           dummy=dummy
+        )
+
+
+    def split_chains(self, d):
+        """Split the .pdb file into two new .pdb files as specified in the
+        chaingrp argument. only one group needs to be specified. The leftover
+        chains automatically form the second group.
+        """
+        pdb = d.split('/')[-1]
+        cmd.load(pdb+'.pdb')
+        cmd.split_chains()
+        save1 = ', '.join([pdb+'_'+i for i in self.grp1])
+        save2 = ', '.join([pdb+'_'+i for i in self.grp2])
+        cmd.save(self.grp1+'.pdb', save1)
+        cmd.save(self.grp2+'.pdb', save2)
+        cmd.reinitialize()
+
+
+    def do_minimization(self):
+        """Go into all the directories and minimize the .pdb files of the
+        unbounded proteins instead.
+        """
+        fn = self.grp1
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + [
+                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+            ],
+            **self.pipe
+        )
+        gmx(
+            ['editconf'] + self.flags['editconf'] + [
+                '-f', fn+'.gro', '-o', fn+'.gro'
+            ],
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + [
+                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+            ],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+            **self.pipe,
+            input=self.input['mdrun']
+        )
+
+        fn = self.grp2
+        gmx(
+            ['pdb2gmx'] + self.flags['pdb2gmx'] + [
+                '-f', fn+'.pdb', '-o', fn+'.gro', '-p', fn + '_topol.top'
+            ],
+            **self.pipe
+        )
+        gmx(
+            ['editconf'] + self.flags['editconf'] + [
+                '-f', fn+'.gro', '-o', fn+'.gro'
+            ],
+            **self.pipe,
+            input=self.input['editconf']
+        )
+        gmx(
+            ['grompp'] + self.flags['grompp'] + [
+                '-c', fn+'.gro', '-o', fn+'.tpr', '-p', fn + '_topol.top'
+            ],
+            **self.pipe,
+            input=self.input['grompp']
+        )
+        gmx(
+            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+            **self.pipe,
+            input=self.input['mdrun']
+        )
+
+
+    def single_point(self):
+        """Creates a single point .tpr file of the single groups.
+        """
+        gromppflags = self.flags['grompp'].copy()
+        idx = gromppflags.index('-f')
+        gromppflags.pop(idx)
+        gromppflags.pop(idx)
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp1+'.gro',
+                '-p', self.grp1+'_topol.top',
+                '-o', self.grp1+'_sp.tpr',
+            ] + gromppflags,
+            **self.pipe
+        )
+        gmx(
+            [
+                'grompp', '-f', self.spmdp,
+                '-c', self.grp2+'.gro',
+                '-p', self.grp2+'_topol.top',
+                '-o', self.grp2+'_sp.tpr',
+            ] + gromppflags,
+            **self.pipe
+        )
+
+
+    def electrostatics(self):
+        """Calcutlate the Coulomb and Solvation Energy based on the single
+        point .tpr files of the chain groups. Parameters are stored in a
+        separate file for gropbe. Reference it through the main parameter file
+        for CC/PBSA.
+        """
+        chainselec = ",".join(str(i) for i in range(len(self.grp1)))
+
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,%s_sp.tpr)" % self.grp1)
+
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        log("%s_solvation.log" % self.grp1, gropbe)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout.decode('utf-8'))
+        
+        chainselec = ",".join(str(i) for i in range(len(self.grp2)))
+
+        shutil.copy(self.flags['gropbe'][0], 'gropbe.prm')
+
+        with open('gropbe.prm', 'a') as params:
+            params.write("in(tpr,%s_sp.tpr)" % self.grp2)
+
+        gropbe = subprocess.run(
+            ["gropbe", 'gropbe.prm'],
+            input=bytes(chainselec, 'utf-8'),
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        log("%s_solvation.log" % self.grp2, gropbe)
+
+        if self.pipe['stdout'] == None:
+            print(gropbe.stdout.decode('utf-8'))
+
+
+    def lj(self):
+        """Calculate the Lennard-Jones Energy based on the sp.tpr of the
+        unbound proteins
+        """
+        gmx([
+            'mdrun', '-s', self.grp1+'_sp.tpr',
+            '-rerun', self.grp1+'.gro',
+            '-deffnm', self.grp1+'_sp',
+            '-nt', '1'
+        ])
+        lj = gmx(
+            ['energy', '-f', self.grp1+'_sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        lj.stderr = None
+        log(self.grp1+"_lj.log", lj)
+
+        if self.pipe['stdout'] == None:
+            print(lj.stdout.decode('utf-8'))
+
+        gmx([
+            'mdrun', '-s', self.grp2+'_sp.tpr',
+            '-rerun', self.grp2+'.gro',
+            '-deffnm', self.grp2+'_sp',
+            '-nt', '1'
+        ])
+        lj = gmx(
+            ['energy', '-f', self.grp2+'_sp.edr', '-sum', 'yes'],
+            input=b'5 7',
+            stdout=subprocess.PIPE,
+            stderr=self.pipe['stderr']
+        )
+        lj.stderr = None
+        log("".join(self.grp2)+"_lj.log", lj)
+
+        if self.pipe['stdout'] == None:
+            print(lj.stdout.decode('utf-8'))
+
+
+    def area(self):
+        """Calculate the interaction area of the wildtype protein.
+        """
+        sasa = ['sasa', '-s']
+
+        os.chdir(self.wt)
+
+        if len(self) > 0:
+
+            for i in range(1, len(self)+1):
+                os.chdir(str(i))
+                gmx(sasa + ['confout.gro'], input=b'0')
+                gmx(
+                    sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
+                    input=b'0',
+                    **self.pipe
+                )
+                gmx(
+                    sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
+                    input=b'0',
+                    **self.pipe
+                )
+                os.chdir('..')
+
+        else: 
+            gmx(sasa + ['confout.gro'], input=b'0')
+            gmx(
+                sasa + [self.grp1 + '.gro', '-o', self.grp1+'_area.xvg'],
+                input=b'0',
+                **self.pipe
+            )
+            gmx(
+                sasa + [self.grp2 + '.gro', '-o', self.grp2+'_area.xvg'],
+                input=b'0',
+                **self.pipe
+            )
+
+        os.chdir(self.maindir)
+
+
+    def fullrun(self):
+        """Generate all the data for DataCollector.
+        """
+        print("Minimizing starting structures")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            super().do_minimization(d)
+            os.chdir(self.maindir)
+        
+        super().update_structs()
+
+        print("Generating CONCOORD structure ensembles.")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.do_concoord(d)
+            os.chdir(self.maindir)
+
+        self.wds = [d+'/'+str(i) for d in self.wds \
+                for i in range(1, len(self)+1)]
+
+        print("Minimizing structures and extract values of bounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            super().do_minimization(d)
+            super().single_point()
+            super().electrostatics()
+            super().lj()
+            os.chdir(self.maindir)
+
+        print("Minimizing structures and extract values of unbounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.split_chains(d)
+            self.do_minimization()
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            os.chdir(self.maindir)
+        
+        self.area()
+
+
+    def no_concoord(self):
+        """Get energy values without running CONCOORD to ignore the flexibility
+        contribution to the energy term. Very fast alternative.
+        """
+        print("Minimizing structures and extract values of bounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            super().do_minimization(d)
+            super().single_point()
+            super().electrostatics()
+            super().lj()
+            os.chdir(self.maindir)
+
+        print("Minimizing structures and extract values of unbounded proteins")
+        for d in tqdm(self.wds):
+            os.chdir(d)
+            self.split_chains(d)
+            self.do_minimization()
+            self.single_point()
+            self.electrostatics()
+            self.lj()
+            os.chdir(self.maindir)
+        
+        self.area()
 
 
 class DataCollector:
-    """After a fullrun of DataGenerator, the object can be parsed to this class
-    to search for the relevant files in which energy values are supposed to be
+    """After a run of DataGenerator, the object can be parsed to this class to
+    search for the relevant files in which energy values are supposed to be
     stored. Also contains methods to create .csv tables for calculation of
     folding free energy differences between wildtype and mutant protein.
     """
@@ -595,32 +970,41 @@ class DataCollector:
         directories that contains the data is known without much searching.
         """
         self.maindir = data_obj.maindir
+        self.wds = data_obj.wds
         os.chdir(self.maindir)
 
-        self.n = len(data_obj)
+        self.n = data_obj.n
         self.mut_df = data_obj.mut_df
-        self.mut_df['Mutation'] = [self.aa321[x] for x in self.mut_df['Mutation']]
-        self.mode = data_obj.mode
+        self.wt = data_obj.wt
 
-        if self.mode == 'stability':
-            self.G = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
-            )
-            self.dG = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.G.index[1:]
-            )
-            self.ddG = pd.DataFrame(0.0,
-                columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-                index=self.G.index[1:]
+        for i, k in enumerate(self.mut_df["Mutation"].index):
+ 
+            for j, l in enumerate(k):
+                mut = self.mut_df["Mutation"][i][j]
+        
+                if len(mut) > 0:
+                    self.mut_df["Mutation"][i][j] = self.aa321[mut]
+
+        idx = next(os.walk('.'))[1]
+        self.G_mean = pd.DataFrame(0.0, 
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=idx
+        )
+
+        if self.n > 0:
+            idx = pd.MultiIndex.from_tuples(
+                [(i, j) for i in idx for j in range(1, len(self)+1)]
             )
 
-        else:
-            self.G = pd.DataFrame(0.0, 
-                columns=['SOLV', 'COUL', 'LJ', 'PPIS', 'PKA'],
-                index=unpack([data_obj.__repr__(), list(data_obj.mut_df.index)])
-            )
+        self.G = pd.DataFrame(0.0, 
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS'],
+            index=idx
+        )
+        self.dG = self.G_mean.drop(self.wt)
+        self.ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=self.dG.index
+        )
 
 
     def __len__(self):
@@ -633,93 +1017,38 @@ class DataCollector:
         """Find the files in which the Lennard-Jones energies are supposed to
         be written in and save the parsed values in self.G.
         """
-        tail = "tail -q -n 1 ".split()
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/lj.log")
-            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [float(i.split()[1]) for i in \
-                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
+        for i in self.G.index:
 
-            if self.mode == 'affinity':
-                files = glob.glob("*/chain_*_lj.log")
-                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'kJ/mol' in i]
-                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.G -= np.array(parsed).sum()
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
 
-            self.G['LJ'][d] = np.array(parsed).mean()
+            else:
+                os.chdir(i)
+
+            LJ = next(get_lj('lj.log'))
+            self.G['LJ (1-4)'][i] = LJ[0]
+            self.G['LJ (SR)'][i] = LJ[1]
+
             os.chdir(self.maindir)
 
 
-    def search_coulomb(self):
+    def search_electro(self):
         """Find the file in which the Coulomb energies are supposed to be
         written in and save the parsed values in G.
         """
-#        tail = "tail -q -n 1 ".split()
-#        for d in self.G.index:
-#            os.chdir(d)
-#            files = glob.glob("*/coulomb.log")
-#            lj = subprocess.run(tail + files, stdout=subprocess.PIPE)
-#            parsed = [float(i.split()[1]) for i in \
-#                lj.stdout.decode('utf-8').split('\n') if len(i) > 0]
-#            self.G['COUL'][d] = np.array(parsed).mean()
-#            os.chdir(self.maindir)
-#
-#            if self.mode == 'affinity':
-#                files = glob.glob("*/chain_*_coulomb.log")
-#                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-#                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-#                    if 'kJ/mol' in i]
-#                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-#                self.G -= np.array(parsed).sum()
-#
-#            os.chdir(self.maindir)
-        tail = "tail -q -n 5".split()
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/solvation.log")
-            coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
-                if 'Coulombic energy' in i]
-            parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
-            self.G['COUL'][d] = np.array(parsed).mean()
+        for i in self.G.index:
 
-            if self.mode == 'affinity':
-                files = glob.glob("*/solvation_*.log")
-                coul = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                coul = [i for i in coul.stdout.decode('utf-8').split('\n') \
-                    if 'Coulombic energy' in i]
-                parsed = [float(i[:i.index('kJ')].split("=")[1]) for i in coul]
-                self.G -= np.array(parsed).sum()
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
 
-            os.chdir(self.maindir)
-        
+            else:
+                os.chdir(i)
 
-
-    def search_solvation(self):
-        """Find the files in which the solvation energy and the Coulomb
-        potential are supposed to be written in and save the parsed values in
-        self.G.
-        """
-        tail = "tail -q -n 3".split()
-        for d in self.G.index:
-            os.chdir(d)
-            files = glob.glob("*/solvation.log")
-            solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                if 'Solvation Energy' in i]
-            parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-            self.G['SOLV'][d] = np.array(parsed).mean()
-
-            if self.mode == 'affinity':
-                files = glob.glob("*/solvation_*.log")
-                solv = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                solv = [i for i in solv.stdout.decode('utf-8').split('\n') \
-                    if 'Solvation Energy' in i]
-                parsed = [float(i[:i.index('kJ')].split("y")[1]) for i in solv]
-                self.G -= np.array(parsed).sum()
+            vals = next(get_electro('solvation.log'))
+            self.G['COUL'][i] = vals[0]
+            self.G['SOLV'][i] = vals[1]
 
             os.chdir(self.maindir)
 
@@ -729,27 +1058,16 @@ class DataCollector:
         potential are supposed to be written in and save the parsed values in
         G.
         """
-        tail = "tail -q -n 1 ".split()
+        for i in self.G.index:
 
-        if self.mode == 'stability':
-
-            for d in self.G.index:
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
                 os.chdir(d)
-                files = glob.glob("*/area.xvg")
-                areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-                parsed = [float(i.split()[1]) for i in \
-                    areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-                self.G['SAS'][d] = np.array(parsed).mean()
-                os.chdir(self.maindir)
 
-        if self.mode == 'affinity':
-            os.chdir(self.G.index[0])
-            files = glob.glob("*/area.xvg")
-            areas = subprocess.run(tail + files, stdout=subprocess.PIPE)
-            parsed = [i.split()[1:] for i in \
-                areas.stdout.decode('utf-8').split('\n') if len(i) > 0]
-            parsed = [(float(i[1])+float(i[2])-float(i[0])) for i in parsed]
-            self.G['PPIS'] = np.array(parsed).mean()
+            else:
+                os.chdir(i)
+
+            self.G['SAS'][i] = next(get_area('area.xvg'))
             os.chdir(self.maindir)
 
 
@@ -759,35 +1077,32 @@ class DataCollector:
         self.G.
         """
         head = "head -n 1 entropy.log".split()
-        for d in self.G.index:
-            os.chdir(d)
+        for i in self.G_mean.index:
+            os.chdir(i)
             entropy = subprocess.run(head, stdout=subprocess.PIPE)
             entropy = entropy.stdout.decode('utf-8')
             valstart = entropy.index('is ')+3
             valend = entropy.index(' J/mol K')
             entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
-            self.G['-TS'][d] = np.array(-298.15 * entropy)
+            self.G_mean['-TS'][i] = np.array(-298.15 * entropy)
             os.chdir(self.maindir)
 
 
     def search_data(self):
-        """Uses all the previous searching methods to create a .csv file of the
-        DataFrame object.
+        """Use all of the searching methods to fill out the energy table.
+        Returns the DataFrame object.
         """
-        if self.mode == 'stability':
-            self.search_lj()
-            self.search_coulomb()
-            self.search_solvation()
-            self.search_area()
-            self.search_entropy()
-            self.G.to_csv("G.csv")
+        self.search_lj()
+        self.search_electro()
+        self.search_area()
+        self.search_entropy()
 
-        if self.mode == 'affinity':
-            self.search_lj()
-            self.search_coulomb()
-            self.search_solvation()
-            self.search_area()
-            self.G.to_csv("G.csv")
+        for c in self.G.columns:
+            
+            for i in self.G_mean.index:
+                self.G_mean.loc[i, c] = self.G.loc[i, c].mean()
+
+        return self.G_mean, self.G
 
 
     def dstability(self, gxg_table):
@@ -796,166 +1111,393 @@ class DataCollector:
         independent of this function. This is just used for additional info.
         """
         gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
-        for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
+        self.dG_unfld = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=[]
+        )
 
-            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
+        for c in gxgtable.columns:
 
-            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
+            for i in self.mut_df.index:
+                mut = [j for j in self.mut_df.loc[i, "Mutation"] if len(j) > 0]
+                wt = [j for j in self.mut_df.loc[i, "AA"] if len(j) > 0]
 
-            self.dG['SAS'][i] = self.G['SAS'][i] - self.G['SAS'][0]
+                unfld = [
+                    gxgtable[c]["G%sG" % mut[j]] - gxgtable[c]["G%sG" % wt[j]] \
+                        for j in range(len(mut))
+                ]
+                dfi = "+".join([j for j in i if len(j) > 0])
+                self.dG_unfld.loc[dfi, c] = sum(unfld)
+                self.dG_unfld.to_csv("dG_unfold.csv")
 
-            self.dG['-TS'][i] = self.G['-TS'][i] - self.G['-TS'][0]
+            for i in self.dG.index:
+                self.dG.loc[i, c] = self.G_mean.loc[i, c] - self.G_mean.loc[self.wt, c]
 
-        self.dG.to_csv("dG.csv")
-
-
-    def daffinity(self, gxg_table):
-        """Calculate the free energy difference between folded and unfolded
-        state based on the energy table passed. ddstability operates
-        independent of this function. This is just used for additional info.
-        """
-        gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
-        for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.dG['SOLV'][i] = self.G['SOLV'][i] - self.G['SOLV'][0]
-
-            self.dG['COUL'][i] = self.G['COUL'][i] - self.G['COUL'][0]
-
-            self.dG['LJ'][i] = self.G['LJ'][i] - self.G['LJ'][0]
-
-        self.dG.to_csv("dG.csv")
+        return self.dG, self.dG_unfld
 
 
-    def ddstability(self, gxg_table, alpha, beta, gamma, tau):
-        """Calculate the folding free energy difference. For the stability
+    def ddstability(self):
+        """Calculate the folding free energy difference. For this stability
         calculation, a table with values of GXG tripeptides needs to be
         supplied.
         """
-        gxgtable = pd.read_csv(gxg_table, index_col=0)
-        
+        for c in self.ddG.columns[1:]:
+
+            for i in self.ddG.index:
+                self.ddG.loc[i, c] = self.dG.loc[i, c] - self.dG_unfld.loc[i, c]
+
+
         for i in self.ddG.index:
-            aa_wt = "G%sG" % i.split('_')[-1][-1]
-            aa_mut = "G%sG" % i.split('_')[-1][0]
-            self.ddG['SOLV'][i] = alpha * \
-                 (self.G['SOLV'][i] - self.G['SOLV'][0] - \
-                 gxgtable['SOLV'][aa_mut] + gxgtable['SOLV'][aa_wt])
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
+        
+        return self.ddG
 
-            self.ddG['COUL'][i] = alpha * \
-                 (self.G['COUL'][i] - self.G['COUL'][0] - \
-                 gxgtable['COUL'][aa_mut] + gxgtable['COUL'][aa_wt])
-
-            self.ddG['LJ'][i] = beta * \
-                 (self.G['LJ'][i] - self.G['LJ'][0] - \
-                 gxgtable['LJ'][aa_mut] + gxgtable['LJ'][aa_wt])
-
-            self.ddG['SAS'][i] = gamma * \
-                 (self.G['SAS'][i] - self.G['SAS'][0] - \
-                 gxgtable['SAS'][aa_mut] + gxgtable['SAS'][aa_wt])
-
-            self.ddG['-TS'][i] = tau * \
-                 (self.G['-TS'][i] - self.G['-TS'][0] - \
-                 gxgtable['-TS'][aa_mut] + gxgtable['-TS'][aa_wt])
-
-            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
-                self.ddG['LJ'][i] +self.ddG['SAS'][i] +self.ddG['-TS'][i]
-
-        self.ddG.to_csv("ddG.csv")
-
-
-    def ddaffinity(self, alpha, beta, gamma, c, pka):
-        """Calculate the change in affinity
+    def fitstability(self, alpha, beta, gamma, tau):
+        """Multiply the column of each energy contribution by a certain value.
         """
-        self.ddG = pd.DataFrame(0.0,
-            columns=['CALC', 'SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=self.G.index[1:]
-        )
-        
+        self.ddG["SOLV"] *= alpha
+        self.ddG["COUL"] *= alpha
+        self.ddG["LJ (1-4)"] *= beta
+        self.ddG["LJ (SR)"] *= beta
+        self.ddG["SAS"] *= gamma
+        self.ddG["-TS"] *= tau
+
         for i in self.ddG.index:
-            self.ddG['SOLV'][i] = alpha * \
-                 (self.G['SOLV'][i] - self.G['SOLV'][0])
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
 
-            self.ddG['COUL'][i] = alpha * \
-                 (self.G['COUL'][i] - self.G['COUL'][0])
+        return self.ddG
 
-            self.ddG['LJ'][i] = beta * \
-                 (self.G['LJ'][i] - self.G['LJ'][0])
 
-            self.ddG['CALC'][i] =self.ddG['SOLV'][i] +self.ddG['COUL'][i] + \
-                self.ddG['LJ'][i] + gamma*ddG['PPIS'][i]+ c +self.ddG['PKA'][i]
+class AffinityCollector:
+    """After a fullrun of AffinityCollector, the object can be passed to this
+    constructor to extract the energy values from the directory. A full search
+    produces .csv files with values for the bounded and unbounded states for
+    wildtype and mutations, aswell as the ddG values.
+    """
+    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
+    aa3 = "ALA CYS ASP GLU PHE GLY HIS ILE LYS LEU MET ASN PRO GLN ARG SER THR VAL TRP TYR".split()
+    aa123 = dict(zip(aa1,aa3))
+    aa321 = dict(zip(aa3,aa1))
 
-        self.ddG.to_csv("ddG.csv")
+    def __init__(self, data_obj):
+        """Pass a AffinityGenerator object to initialize.
+        """
+        self.maindir = data_obj.maindir
+        os.chdir(self.maindir)
+
+        self.n = data_obj.n
+        self.mut_df = data_obj.mut_df
+        self.wt = data_obj.wt
+        self.grp1 = data_obj.grp1
+        self.grp2 = data_obj.grp2
+
+        for i, k in enumerate(self.mut_df["Mutation"].index):
+
+            for j, l in enumerate(k):
+                mut = self.mut_df["Mutation"][i][j]
+
+                if len(mut) > 0:
+                    self.mut_df["Mutation"][i][j] = self.aa321[mut]
+
+        idx = next(os.walk('.'))[1]
+        self.G_bound_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+        self.G_grp1_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+        self.G_grp2_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+
+        if self.n > 0:
+            idx = pd.MultiIndex.from_tuples(
+                [(i, j) for i in idx for j in range(1, len(self)+1)]
+            )
+
+        self.G_bound = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=idx
+        )
+        self.G_grp1 = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=self.G_bound.index
+        )
+        self.G_grp2 = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=self.G_bound.index
+        )
+
+        self.dG_bound = self.G_bound_mean.drop(self.wt)
+        self.dG_unbound = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS'],
+            index=self.dG_bound.index
+        )
+        self.ddG = pd.DataFrame(0.0,
+            columns=['CALC', 'SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'PPIS', 'PKA'],
+            index=self.dG_bound.index
+        )
+
+    def __len__(self):
+        return self.n
+
+    def search_lj(self):
+        """Find the files in which the Lennard-Jones energies are supposed to
+        be written in and save the parsed values in the respective self.G table.
+        """
+        for i in self.G_bound.index:
+
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
+
+            else:
+                os.chdir(i)
+
+            vals = next(get_lj('lj.log'))
+            self.G_bound['LJ (1-4)'][i] = vals[0]
+            self.G_bound['LJ (SR)'][i] = vals[1]
+
+            vals = next(get_lj('%s_lj.log' % self.grp1))
+            self.G_grp1['LJ (1-4)'][i] = vals[0]
+            self.G_grp1['LJ (SR)'][i] = vals[1]
+
+            vals = next(get_lj('%s_lj.log' % self.grp2))
+            self.G_grp2['LJ (1-4)'][i] = vals[0]
+            self.G_grp2['LJ (SR)'][i] = vals[1]
+
+            os.chdir(self.maindir)
+
+
+    def search_electro(self):
+        """Find the files in which the Solvation energies are supposed to be
+        written in and save the parsed values in the respective self.G table.
+        """
+        for i in self.G_bound.index:
+
+            if self.n > 0:
+                d = "/".join([str(j) for j in i])
+                os.chdir(d)
+
+            else:
+                os.chdir(i)
+
+            vals = next(get_electro('solvation.log'))
+            self.G_bound['COUL'][i] = vals[0]
+            self.G_bound['SOLV'][i] = vals[1]
+
+            vals = next(get_electro('%s_solvation.log' % self.grp1))
+            self.G_grp1['COUL'][i] = vals[0]
+            self.G_grp1['SOLV'][i] = vals[1]
+
+            vals = next(get_electro('%s_solvation.log' % self.grp2))
+            self.G_grp2['COUL'][i] = vals[0]
+            self.G_grp2['SOLV'][i] = vals[1]
+
+            os.chdir(self.maindir)
+
+
+    def search_area(self):
+        """Get the protein-protein interaction surface (PPIS) of the wildtype
+        and store it in the ddG table since mutant values are not required.
+        """
+        os.chdir(self.wt)
+
+        if self.n > 0:
+
+            for i in range(len(self)):
+                os.chdir(str(i+1))
+
+                cmplx = next(get_area("area.xvg"))
+                grp1 = next(get_area("%s_area.xvg" % self.grp1))
+                grp2 = next(get_area("%s_area.xvg" % self.grp2))
+
+                self.G_bound['PPIS'][i] = grp1 + grp2 - cmplx
+
+                os.chdir('..')
+
+        else:
+            cmplx = next(get_area("area.xvg"))
+            grp1 = next(get_area("%s_area.xvg" % self.grp1))
+            grp2 = next(get_area("%s_area.xvg" % self.grp2))
+
+            self.G_bound_mean['PPIS'] = grp1 + grp2 - cmplx
+ 
+        os.chdir(self.maindir)
+
+
+    def search_data(self):
+        """Use all of the searching methods to fill out the energy table.
+        Returns the DataFrame object.
+        """
+        self.search_lj()
+        self.search_electro()
+        self.search_area()
+
+        for c in self.G_bound.columns:
+ 
+            for i in self.G_bound_mean.index:
+                self.G_bound_mean.loc[i, c] = self.G_bound.loc[i, c].mean()
+                self.G_grp1_mean.loc[i, c] = self.G_grp1.loc[i, c].mean()
+                self.G_grp2_mean.loc[i, c] = self.G_grp2.loc[i, c].mean()
+
+        self.G_bound_mean['PPIS'] = self.G_bound.loc[self.wt, 'PPIS'].mean()
+
+        return self.G_bound_mean, self.G_grp1_mean, self.G_grp2_mean
+
+
+    def daffinity(self):
+        """Calculate the dG tables for the (un-)bounded state for the mutations
+        by subtracting the wildtype values from it.
+        """
+        for c in self.dG_bound.columns:
+
+            for i in self.dG_bound.index:
+                self.dG_bound.loc[i, c] = \
+                    self.G_bound_mean.loc[i, c] - \
+                    self.G_bound_mean.loc[self.wt, c]
+        
+                self.dG_unbound.loc[i, c] = \
+                    (self.G_grp1_mean.loc[i, c] - \
+                    self.G_grp1_mean.loc[self.wt, c]) + \
+                    (self.G_grp2_mean.loc[i, c] - \
+                    self.G_grp2_mean.loc[self.wt, c])
+
+
+    def ddaffinity(self):
+        """Calculate the binding free energy difference
+        """
+        for c in self.dG_bound.columns:
+
+            for i in self.dG_unbound.index:
+                self.ddG[c][i] = self.dG_bound[c][i] - self.dG_unbound[c][i]
+
+        for i in self.ddG.index:
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":]) \
+                + self.G_bound_mean['PPIS'][0]
+            self.ddG['PPIS'][i] = self.G_bound_mean['PPIS'][0]
+
+    
+    def fitaffinity(self, alpha, beta, gamma, c, pka=0):
+        """Multiply the column of each energy contribution by a certain value.
+        Add constants to values as in the paper.
+        """
+        self.ddG["SOLV"] *= alpha
+        self.ddG["COUL"] *= alpha
+        self.ddG["LJ (1-4)"] *= beta
+        self.ddG["LJ (SR)"] *= beta
+        self.ddG["PPIS"] = gamma*self.ddG["PPIS"] + c
+        self.ddG["PKA"] = pka
+
+        for i in self.ddG.index:
+            self.ddG["CALC"][i] = sum(self.ddG.loc[i, "SOLV":])
+
+        return self.ddG
 
 
 class GXG(DataGenerator, DataCollector):
-    """Subclassed from DataGenerator. Used to create the GXG look-up tables for
-    stability calculations.
+    """Prepares a directory for the creation/calculation of a GXG tripeptides
+    energy table. This serves as an estimation of the energy difference of the
+    unfolded state. Subclassed from DataGenerator and DataCollector.
     """
-    aa1 = list("ACDEFGHIKLMNPQRSTVWY")
-
     def __init__(
         self,
-        gxg_flags,
-        min_mdp,
-        energy_mdp,
-        mdrun_table,
-        pbeparams
+        flags,
+        spmdp,
+        verbosity=0
     ):
-        """Only takes the flags and .mdp arguments, since the others should not
-        affect it anyway.
+        """In contrast to DataGenerator, this constructor does not require the
+        wildtype .pdb file or a list of mutations.
         """
-        self.mode = 'stability'
-        self.flags = self.parse_flags(gxg_flags)
-        self.e_mdp = energy_mdp
-        self.min_mdp = min_mdp
-        self.mdrun_table = mdrun_table
-        self.pbeparams = pbeparams
-        self.minimized = False
-        self.mut_df = pd.DataFrame(0, columns=['X'],
-            index=["G%sG" % x for x in self.aa1])
-        self.chains = ['A']
+        if verbosity == 0:
+            self.pipe = {
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.PIPE
+            }
 
-        makedir('GXG')
+        elif verbosity == 1:
+            self.pipe = {
+                'stdout': None,
+                'stderr': None
+            }
+
+        else:
+            raise ValueError
+        
+        self.flags, self.input = parse_flags(flags)
+        self.flags.setdefault("disco", []).extend(["-op", ""])
+        self.chains = 'A'
+        self.n = len(self)
+        os.mkdir('GXG')
         os.chdir('GXG')
         self.maindir = os.getcwd()
-        self.make_gxg()
-        self.wdlist = [self.maindir+'/G%sG' % x for x in self.aa1]
 
-        self.G = pd.DataFrame(0.0,
-            columns=['SOLV', 'COUL', 'LJ', 'SAS', '-TS'],
-            index=["G%sG" % x for x in self.aa1])
-
-    
-    def __repr__(self):
-        return None
-
-
-    def make_gxg(self):
-        """Create the tripeptides using PyMOL. Each peptide is saved in a
-        separate directory similar to mutations in Protein.
-        """
         for x in self.aa1:
-            gxg = "G%sG" % x
-            makedir(gxg)
-            cmd.fab(gxg, gxg)
-            cmd.save(gxg+'/'+gxg+'.pdb')
+            gxg = 'G%sG' % x
+            os.mkdir(gxg)
+            cmd.fab(gxg)
+            cmd.save('%s/%s.pdb' % (gxg, gxg))
+            cmd.alter('chain ""', 'chains="A"')
             cmd.reinitialize()
 
+        os.chdir('..')
 
-    def __call__(self):
-        self.concoord()
-        self.minimize()
-        self.coulomb_lj()
-        self.solvation_energy()
-        self.area()
-        self.schlitter()
-        self.search_lj()
-        self.search_coulomb()
-        self.search_solvation()
-        self.search_area()
-        self.search_entropy()
+        for k, v in self.flags.items():
+            files = list(i for i in filecheck(*v))
+
+            for ori, abs_ in files:
+                shutil.copy(abs_, self.maindir)
+                v[v.index(ori)] = self.maindir+"/"+abs_.split("/")[-1]
+                self.flags[k] = v
+
+        shutil.copy(spmdp, self.maindir)
+        self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
+
+        os.chdir(self.maindir)
+        self.wds = ['G%sG' % x for x in self.aa1]
+        idx = next(os.walk('.'))[1]
+        self.G_mean = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS', '-TS'],
+            index=idx
+        )
+        idx = pd.MultiIndex.from_tuples(
+            [(i, j) for i in idx for j in range(1, len(self)+1)]
+        )
+        self.G = pd.DataFrame(0.0,
+            columns=['SOLV', 'COUL', 'LJ (1-4)', 'LJ (SR)', 'SAS'],
+            index=idx
+        )
+
+
+    def create_table(self):
+        """Creates the lookup table for the unfolded state in stability
+        calculations.
+        """
+        self.fullrun()
+        return self.search_data()
+
+
+if __name__ == '__main__':
+    x = AffinityGenerator(
+        "1cho.pdb",
+        'mut.txt',
+        'flags.txt',
+#        'gxgflags.txt',
+#        '/Users/linkai/.local/lib/python3.7/site-packages/ccpbsa-0.1-py3.7.egg/ccpbsa/parameters/flags.txt',
+        'EFG',
+        'parameters/energy.mdp',
+        1,
+#        True
+    )
+    x.fullrun()
+    y = AffinityCollector(x)
+    y.search_data()
+    print(y.G_bound_mean)
+    y.daffinity()
+    y.ddaffinity()
+    print(y.dG_bound)
+    print(y.dG_unbound)
+    print(y.ddG)

@@ -1,4 +1,6 @@
 [dist]
+<<<=1
+<<<=1
 
 [pdb2gmx]
 -ff=gromos53a6

@@ -1,4 +1,4 @@
-from .CCPBSA2 import *
+from .CCPBSA import *
 import argparse
 import os
 import sys
