@@ -1,0 +1,12 @@
+#!/bin/env python3
+
+pkgpath = "/".join(__file__.split("/")[:-3])
+
+with open(pkgpath+'/ccpbsa/parameters/flags.txt', 'a') as paramfile:
+    paramfile.write("-tablep="+pkgpath+'/ccpbsa/parameters/table4r-6-12.xvg\n')
+    paramfile.write("-table="+pkgpath+'/ccpbsa/parameters/table4r-6-12.xvg\n')
+    paramfile.write("[grompp]\n")
+    paramfile.write("-maxwarn=2\n")
+    paramfile.write("-f="+pkgpath+'/ccpbsa/parameters/min.mdp\n')
+    paramfile.write("[gropbe]\n")
+    paramfile.write(pkgpath+'/ccpbsa/parameters/gropbe.txt\n')
