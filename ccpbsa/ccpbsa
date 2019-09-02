@@ -247,17 +247,15 @@ if __name__ == '__main__':
             data.single_point()
             data.electrostatics()
             data.lj()
-            data.area()
             os.chdir(data.maindir)
 
         def multienergy_chains(d):
             os.chdir(d)
-            data.split_chains(d)
             data.do_minimization_chains()
             data.single_point_chains()
             data.electrostatics_chains()
             data.lj_chains()
-            os.chdir(datdataindir)
+            os.chdir(data.maindir)
 
 
         if cliargs.no_concoord:
@@ -265,6 +263,11 @@ if __name__ == '__main__':
             pool.map(multienergy, data.wds)
             pool.close()
             pool.join()
+
+            for d in data.wds:
+                os.chdir(d)
+                data.split_chains()
+                os.chdir(data.maindir)
 
             pool = Pool(cliargs.cores)
             pool.map(multienergy_chains, data.wds)
