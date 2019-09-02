@@ -4,80 +4,93 @@ import os
 import sys
 from multiprocessing import Pool
 
+pkgpath = __path__[0]
+cliparser = argparse.ArgumentParser(prog='ccpbsa')
+
+cliparser.add_argument(
+    "routine",
+    help="The first argument chooses which routine to run",
+    choices={'setup', 'stability', 'affinity', 'gxg'}
+)
+
+options = cliparser.add_argument_group("OPTIONS")
+
+options.add_argument(
+    "-w", "--wildtype",
+    help=".pdb file of the wildtype protein."
+)
+options.add_argument(
+    "-m", "--mutations",
+    help="a .txt file with the list of mutations. Each mutant separated \
+    by a newline. Multiple mutations in the same mutant are to be \
+    separated by comma."
+)
+options.add_argument(
+    "-f", "--flags",
+    help="The flags, which should be passed to CONCOORD and GROMACS. At \
+    least the number of structures in CONCOORD and the forcefield and water \
+    model should be specified in there",
+    default=pkgpath+'/parameters/flags.txt'
+)
+options.add_argument(
+    "-c", "--chains",
+    help="Name of chains in the .pdb file for the first protein group. \
+    Only needed in affinity calculation.",
+    default='A',
+    nargs='+'
+)
+options.add_argument(
+    "--fit-parameters",
+    help="scaling factors of the ddG calculations. Names should fit the \
+    kind of calculation. Default parameters depend on what is calculated",
+    default=pkgpath+'',
+)
+options.add_argument(
+    "--energy-mdp",
+    default=pkgpath+'/parameters/energy.mdp',
+    help=".mdp file for GROMACS Lennard-Jones Energy evaluations."
+)
+options.add_argument(
+    "--gxg-table",
+    default=pkgpath+'/parameters/GXG.csv',
+    help="GXG table used for stability change calculations."
+)
+options.add_argument(
+    "-v",
+    help="Print stdout and stderr of the programs.",
+    action='store_true'
+)
+options.add_argument(
+    "--no-concoord",
+    help="Run energy extraction from minimized structures only, without \
+    generating structure ensembles with CONCOORD.",
+    action='store_true'
+)
+options.add_argument(
+    '--cores',
+    default=0,
+    help="Specify the number of cores to use for multiprocessing, takes \
+    the maximum amount available per default.",
+    type=int
+)
+
+cliargs = cliparser.parse_args()
+gxg_table = os.path.abspath(cliargs.gxg_table)
+
+if cliargs.v:
+    verbose = 1
+else:
+    verbose = 0
+
+if cliargs.cores == 0:
+    cliargs.cores = os.cpu_count()
+
+pool = Pool(cliargs.cores)
+
 def main():
-    pkgpath = __path__[0]
-    cliparser = argparse.ArgumentParser(prog='ccpbsa')
-
-    cliparser.add_argument(
-        "routine",
-        help="The first argument chooses which routine to run",
-        choices={'setup', 'stability', 'affinity', 'gxg'}
-    )
-
-    options = cliparser.add_argument_group("OPTIONS")
-
-    options.add_argument(
-        "-w", "--wildtype",
-        help=".pdb file of the wildtype protein."
-    )
-    options.add_argument(
-        "-m", "--mutations",
-        help="a .txt file with the list of mutations. Each mutant separated \
-        by a newline. Multiple mutations in the same mutant are to be \
-        separated by comma."
-    )
-    options.add_argument(
-        "-f", "--flags",
-        help="The flags, which should be passed to CONCOORD and GROMACS. At \
-        least the number of structures in CONCOORD and the forcefield and water \
-        model should be specified in there",
-        default=pkgpath+'/parameters/flags.txt'
-    )
-    options.add_argument(
-        "-c", "--chains",
-        help="Name of chains in the .pdb file for the first protein group. \
-        Only needed in affinity calculation.",
-        default='A',
-        nargs='+'
-    )
-    options.add_argument(
-        "--fit-parameters",
-        help="scaling factors of the ddG calculations. Names should fit the \
-        kind of calculation. Default parameters depend on what is calculated",
-        default=pkgpath+'',
-    )
-    options.add_argument(
-        "--energy-mdp",
-        default=pkgpath+'/parameters/energy.mdp',
-        help=".mdp file for GROMACS Lennard-Jones Energy evaluations."
-    )
-    options.add_argument(
-        "--gxg-table",
-        default=pkgpath+'/parameters/GXG.csv',
-        help="GXG table used for stability change calculations."
-    )
-    options.add_argument(
-        "-v",
-        help="Print stdout and stderr of the programs.",
-        action='store_true'
-    )
-    options.add_argument(
-        "--no-concoord",
-        help="Run energy extraction from minimized structures only, without \
-        generating structure ensembles with CONCOORD.",
-        action='store_true'
-    )
-    options.add_argument(
-        '--cores',
-        default=0,
-        help="Specify the number of cores to use for multiprocessing, takes \
-        the maximum amount available per default.",
-        type=int
-    )
-
-    cliargs = cliparser.parse_args()
-    gxg_table = os.path.abspath(cliargs.gxg_table)
-
+    """Commandline interface for ccpbsa. Handles multiprocessing and argument
+    parsing
+    """
     if cliargs.routine == 'setup':
 
         with open(pkgpath+'/parameters/flags.txt', 'a') as paramfile:
@@ -90,13 +103,6 @@ def main():
             paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
             sys.exit(0)
 
-    if cliargs.v:
-        verbose = 1
-    else:
-        verbose = 0
-
-    if cliargs.cores == 0:
-        cliargs.cores = multiprocessing.cpu_count()
 
     if cliargs.routine == 'gxg':
         print("Making a new GXG table.")
@@ -122,33 +128,16 @@ def main():
             verbosity = verbose
         )
 
-        def multienergy(d):
-            os.chdir(d)
-            data.do_minimization(d)
-            data.single_point()
-            data.electrostatics()
-            data.lj()
-            data.area()
-            os.chdir(data.maindir)
-
 
         if cliargs.no_concoord:
 
-            pool.map(multimini, data.wds)
-            pool.close()
-            pool.join()
-
-            search = DataCollector(data)
-            search.search_lj()
-            search.search_electro()
-            search.search_area()
-
-            for c in search.G.columns:
-                
-                for i in search.G_mean.index:
-                    search.G_mean.loc[i, c] = search.G.loc[i, c].mean()
+            return data
 
         else:
+
+            data.types += ['concoord']
+
+            return data
 
             def multimini(d):
                 os.chdir(d)
@@ -200,45 +189,6 @@ def main():
             pool.close()
             pool.join()
 
-            search = DataCollector(data)
-            search.search_data()
-
-        print("G values:")
-        print(search.G_mean)
-        search.G.to_csv("G.csv")
-        search.G_mean.to_csv("G_mean.csv")
-
-        if cliargs.fit_parameters == pkgpath:
-            fitprm = pkgpath + '/parameters/fit_stability.txt'
-            cliargs.fit_parameters = fitprm
-
-        with open(cliargs.fit_parameters, 'r') as fit:
-            parameters = fit.readlines()
-            parameters = [l[:-1] for l in parameters] # Remove newlines
-            parameters = [l.split("=") for l in parameters]
-            parameters = dict([(l[0], float(l[1])) for l in parameters])
-
-        search.dstability(gxg_table)
-        print("dG folded values:")
-        print(search.dG)
-        print("dG unfolded values (GXG):")
-
-        if cliargs.no_concoord:
-            search.dG_unfld['-TS'] = 0
-
-        print(search.dG_unfld)
-        search.dG.to_csv("dG_fold.csv")
-        search.dG_unfld.to_csv("dG_unfold.csv")
-
-        search.ddstability()
-        print("ddG values:")
-        print("without fit:")
-        print(search.ddG)
-        search.ddG.to_csv("ddG.csv")
-        ddG_fit = search.fitstability(**parameters)
-        print("with fit:")
-        print(ddG_fit)
-        search.ddG.to_csv("ddG_fit.csv")
 
     elif cliargs.routine == 'affinity':
 
@@ -378,8 +328,77 @@ def main():
         print(search.ddG)
         search.ddG.to_csv('ddG_fit.csv')
 
-        return cliargs.cores, data, case
+
+data = main()
+
+if 'stability' in data.types:
+
+    def multienergy(d):
+        os.chdir(d)
+        data.do_minimization(d)
+        data.single_point()
+        data.electrostatics()
+        data.lj()
+        data.area()
+        os.chdir(data.maindir)
 
 
-mainout = main()
-pool = Pool(mainout[0])
+    if 'concoord' in data.types:
+        pass
+
+    else:
+        print('doing this')
+        pool.map(multienergy, data.wds)
+        pool.close()
+        pool.join()
+
+        search = DataCollector(data)
+        search.search_lj()
+        search.search_electro()
+        search.search_area()
+
+        for c in search.G.columns:
+            
+            for i in search.G_mean.index:
+                search.G_mean.loc[i, c] = search.G.loc[i, c].mean()
+
+#    search = DataCollector(data)
+#    search.search_data()
+#
+    print("G values:")
+    print(search.G_mean)
+    search.G.to_csv("G.csv")
+    search.G_mean.to_csv("G_mean.csv")
+
+    if cliargs.fit_parameters == pkgpath:
+        fitprm = pkgpath + '/parameters/fit_stability.txt'
+        cliargs.fit_parameters = fitprm
+
+    with open(cliargs.fit_parameters, 'r') as fit:
+        parameters = fit.readlines()
+        parameters = [l[:-1] for l in parameters] # Remove newlines
+        parameters = [l.split("=") for l in parameters]
+        parameters = dict([(l[0], float(l[1])) for l in parameters])
+
+
+    search.dstability(gxg_table)
+    print("dG folded values:")
+    print(search.dG)
+    print("dG unfolded values (GXG):")
+
+    if cliargs.no_concoord:
+        search.dG_unfld['-TS'] = 0
+
+    print(search.dG_unfld)
+    search.dG.to_csv("dG_fold.csv")
+    search.dG_unfld.to_csv("dG_unfold.csv")
+
+    search.ddstability()
+    print("ddG values:")
+    print("without fit:")
+    print(search.ddG)
+    search.ddG.to_csv("ddG.csv")
+    ddG_fit = search.fitstability(**parameters)
+    print("with fit:")
+    print(ddG_fit)
+    search.ddG.to_csv("ddG_fit.csv")
