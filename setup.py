@@ -15,9 +15,10 @@ setuptools.setup(
     packages=setuptools.find_packages(),
     author='Linkai Zhang',
     author_email='linkai.zhang1@googlemail.com',
-    entry_points={'console_scripts':['ccpbsa = ccpbsa:main']},
+    scripts=['ccpbsa/CCPBSA.py', 'ccpbsa/ccpbsa-setup'],
+#    entry_points={'console_scripts':['ccpbsa = ccpbsa:main']},
     include_package_data=True,
     install_requires=["numpy", "pandas", "pymol", "tqdm"]
 )
 
-subprocess.run(['ccpbsa', 'setup'])
+subprocess.run(['ccpbsa-setup'])
