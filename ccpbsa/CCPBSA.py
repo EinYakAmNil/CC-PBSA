@@ -324,8 +324,6 @@ class DataGenerator:
             self.maindir = os.getcwd() + '/' + self.wt
 
         self.spmdp = self.maindir + "/" + spmdp.split("/")[-1]
-        
-        self.types = ['stability']
 
 
     def initdir(self, spmdp):

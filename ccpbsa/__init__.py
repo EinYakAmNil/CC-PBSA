@@ -85,8 +85,6 @@ else:
 if cliargs.cores == 0:
     cliargs.cores = os.cpu_count()
 
-pool = Pool(cliargs.cores)
-
 def main():
     """Commandline interface for ccpbsa. Handles multiprocessing and argument
     parsing
@@ -103,6 +101,7 @@ def main():
             paramfile.write(pkgpath+'/parameters/gropbe.txt\n')
             sys.exit(0)
 
+    pool = Pool(cliargs.cores)
 
     if cliargs.routine == 'gxg':
         print("Making a new GXG table.")
@@ -128,16 +127,11 @@ def main():
             verbosity = verbose
         )
 
-
         if cliargs.no_concoord:
 
-            return data
+            return ['stability'], pool, data
 
         else:
-
-            data.types += ['concoord']
-
-            return data
 
             def multimini(d):
                 os.chdir(d)
@@ -329,9 +323,9 @@ def main():
         search.ddG.to_csv('ddG_fit.csv')
 
 
-data = main()
+routine, pool, data = main()
 
-if 'stability' in data.types:
+if 'stability' in routine:
 
     def multienergy(d):
         os.chdir(d)
@@ -343,11 +337,10 @@ if 'stability' in data.types:
         os.chdir(data.maindir)
 
 
-    if 'concoord' in data.types:
+    if 'concoord' in routine:
         pass
 
     else:
-        print('doing this')
         pool.map(multienergy, data.wds)
         pool.close()
         pool.join()
