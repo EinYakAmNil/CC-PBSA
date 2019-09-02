@@ -321,6 +321,11 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
 
+            for d in data.wds:
+                os.chdir(d)
+                data.split_chains()
+                os.chdir(data.maindir)
+
             pool = Pool(cliargs.cores)
             pool.map(multienergy_chains, data.wds)
             pool.close()
