@@ -98,12 +98,12 @@ if __name__ == '__main__':
 
         def multienergy(d):
             os.chdir(d)
-            data.do_minimization(d)
-            data.single_point()
-            data.electrostatics()
-            data.lj()
-            data.area()
-            os.chdir(data.maindir)
+            gxg.do_minimization(d)
+            gxg.single_point()
+            gxg.electrostatics()
+            gxg.lj()
+            gxg.area()
+            os.chdir(gxg.maindir)
 
         if cliargs.no_concoord:
             pool = Pool(cliargs.cores)
@@ -125,8 +125,8 @@ if __name__ == '__main__':
 
             def multropy(en):
                 os.chdir(en)
-                data.schlitter(en)
-                os.chdir(data.maindir)
+                gxg.schlitter(en)
+                os.chdir(gxg.maindir)
 
             pool = Pool(cliargs.cores)
             pool.map(multimini, gxg.wds)
@@ -154,7 +154,7 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
 
-            gxg.search_gxg()
+            gxg.search_data()
             print(gxg.G_mean)
             gxg.G.to_csv('GXG_all.csv')
             gxg.G_mean.to_csv('GXG.csv')
