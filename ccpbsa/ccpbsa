@@ -195,6 +195,7 @@ if __name__ == '__main__':
             pool.map(multienergy, data.wds)
             pool.close()
             pool.join()
+            data.n = 0
 
             search = DataCollector(data)
             search.search_lj()
@@ -348,6 +349,8 @@ if __name__ == '__main__':
             pool.join()
 
             data.area()
+
+            data.n = 0
 
         else:
 
