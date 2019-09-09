@@ -196,6 +196,11 @@ if __name__ == '__main__':
             search = DataCollector(data)
             search.search_data()
 
+        print("G folded mean values:")
+        print(search.G_mean)
+        search.G.to_csv("G_fold.csv")
+        search.G_mean.to_csv("G_fold_mean.csv")
+
         search.dstability(gxg_table)
         print("dG folded values:")
         print(search.dG)
