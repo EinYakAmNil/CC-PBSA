@@ -10,7 +10,7 @@ if __name__ == '__main__':
     cliparser.add_argument(
         "routine",
         help="The first argument chooses which routine to run",
-        choices={'setup', 'stability', 'affinity', 'gxg'}
+        choices={'stability', 'affinity', 'gxg'}
     )
 
     options = cliparser.add_argument_group("OPTIONS")
@@ -78,6 +78,7 @@ if __name__ == '__main__':
     gxg_table = os.path.abspath(cliargs.gxg_table)
     cliargs.flags = os.path.abspath(cliargs.flags)
     cliargs.fit_parameters = os.path.abspath(cliargs.fit_parameters)
+    cliargs.energy_mdp = os.path.abspath(cliargs.energy_mdp)
 
 
     if cliargs.v:
@@ -87,6 +88,76 @@ if __name__ == '__main__':
 
     if cliargs.cores == 0:
         cliargs.cores = os.cpu_count()
+
+    if cliargs.routine == 'gxg':
+        gxg = GXG(
+            flags=cliargs.flags,
+            spmdp=cliargs.energy_mdp,
+            verbosity=verbose
+        )
+
+        def multienergy(d):
+            os.chdir(d)
+            gxg.do_minimization(d)
+            gxg.single_point()
+            gxg.electrostatics()
+            gxg.lj()
+            gxg.area()
+            os.chdir(gxg.maindir)
+
+        if cliargs.no_concoord:
+            pool = Pool(cliargs.cores)
+            pool.map(multimini, gxg.wds)
+            pool.close()
+            pool.join()
+
+        else:
+
+            def multimini(d):
+                os.chdir(d)
+                gxg.do_minimization(d)
+                os.chdir(gxg.maindir)
+
+            def multicoord(d):
+                os.chdir(d)
+                gxg.do_concoord(d)
+                os.chdir(gxg.maindir)
+
+            def multropy(en):
+                os.chdir(en)
+                gxg.schlitter(en)
+                os.chdir(gxg.maindir)
+
+            pool = Pool(cliargs.cores)
+            pool.map(multimini, gxg.wds)
+            pool.close()
+            pool.join()
+
+            gxg.update_structs()
+
+            pool = Pool(cliargs.cores)
+            pool.map(multicoord, gxg.wds)
+            pool.close()
+            pool.join()
+
+            ensembles = gxg.wds.copy()
+            gxg.wds = [d+'/'+str(i) for d in gxg.wds \
+                    for i in range(1, len(gxg)+1)]
+
+            pool = Pool(cliargs.cores)
+            pool.map(multienergy, gxg.wds)
+            pool.close()
+            pool.join()
+
+            pool = Pool(cliargs.cores)
+            pool.map(multropy, ensembles)
+            pool.close()
+            pool.join()
+
+            gxg.search_data()
+            print(gxg.G_mean)
+            gxg.G.to_csv('GXG_all.csv')
+            gxg.G_mean.to_csv('GXG.csv')
 
     if cliargs.routine == 'stability':
 
@@ -148,7 +219,6 @@ if __name__ == '__main__':
 
                 os.chdir(data.maindir)
 
-
             def multicoord(d):
                 os.chdir(d)
 
@@ -160,12 +230,10 @@ if __name__ == '__main__':
 
                 os.chdir(data.maindir)
 
-
             def multropy(en):
                 os.chdir(en)
                 data.schlitter(en)
                 os.chdir(data.maindir)
-
 
             pool = Pool(cliargs.cores)
             pool.map(multimini, data.wds)
