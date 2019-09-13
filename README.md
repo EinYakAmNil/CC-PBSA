@@ -24,7 +24,7 @@ The installation of GROMACS will not be covered here though, since it has a well
 This module does not seem to exist in in PyPI, so you have to get it from somewhere else.
 On Ubuntu the software exists in the [apt repository](https://packages.ubuntu.com/disco/python3-pymol), so to install that use:
 
-`sudo add-apt-repository deb http://de.archive.ubuntu.com/ubuntu eoan main universe`
+`sudo add-apt-repository "deb http://de.archive.ubuntu.com/ubuntu eoan main universe"`
 
 `sudo apt update`
 
