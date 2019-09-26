@@ -1,7 +1,9 @@
+import sys
+sys.path.append("/opt/pymol-python3/lib/")
 import os
 import shutil
 import subprocess
-from tqdm import tqdm
+#from tqdm import tqdm
 import pandas as pd
 import numpy as np
 import pymol
@@ -1028,7 +1030,12 @@ class DataCollector:
             else:
                 os.chdir(i)
 
-            LJ = next(get_lj('lj.log'))
+            try:
+                LJ = next(get_lj('lj.log'))
+                
+            except:
+                LJ = [np.NaN, np.NaN]
+
             self.G['LJ (1-4)'][i] = LJ[0]
             self.G['LJ (SR)'][i] = LJ[1]
 
@@ -1048,7 +1055,12 @@ class DataCollector:
             else:
                 os.chdir(i)
 
-            vals = next(get_electro('solvation.log'))
+            try:
+                vals = next(get_electro('solvation.log'))
+
+            except RuntimeError:
+                vals = [np.NaN, np.NaN]
+
             self.G['COUL'][i] = vals[0]
             self.G['SOLV'][i] = vals[1]
 
@@ -1069,7 +1081,12 @@ class DataCollector:
             else:
                 os.chdir(i)
 
-            self.G['SAS'][i] = next(get_area('area.xvg'))
+            try:
+                self.G['SAS'][i] = next(get_area('area.xvg'))
+
+            except:
+                self.G['SAS'][i] = np.NaN
+
             os.chdir(self.maindir)
 
 
@@ -1081,12 +1098,18 @@ class DataCollector:
         head = "head -n 1 entropy.log".split()
         for i in self.G_mean.index:
             os.chdir(i)
-            entropy = subprocess.run(head, stdout=subprocess.PIPE)
-            entropy = entropy.stdout.decode('utf-8')
-            valstart = entropy.index('is ')+3
-            valend = entropy.index(' J/mol K')
-            entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
-            self.G_mean['-TS'][i] = np.array(-298.15 * entropy)
+
+            try:
+                entropy = subprocess.run(head, stdout=subprocess.PIPE)
+                entropy = entropy.stdout.decode('utf-8')
+                valstart = entropy.index('is ')+3
+                valend = entropy.index(' J/mol K')
+                entropy = float(entropy[valstart:valend])/1000 # J/mol K-->kJ/mol K
+                self.G_mean['-TS'][i] = np.array(-298.15 * entropy)
+
+            except:
+                self.G_mean['-TS'][i] = np.NaN
+
             os.chdir(self.maindir)
 
 
