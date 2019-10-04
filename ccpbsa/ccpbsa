@@ -348,9 +348,9 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
 
-            data.area()
-
             data.n = 0
+
+            data.area()
 
         else:
 
