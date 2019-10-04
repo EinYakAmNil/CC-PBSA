@@ -340,7 +340,7 @@ if __name__ == '__main__':
 
             for d in data.wds:
                 os.chdir(d)
-                data.split_chains()
+                data.split_chains(d)
                 os.chdir(data.maindir)
 
             pool = Pool(cliargs.cores)
@@ -399,7 +399,7 @@ if __name__ == '__main__':
 
             for d in data.wds:
                 os.chdir(d)
-                data.split_chains()
+                data.split_chains(d)
                 os.chdir(data.maindir)
 
             pool = Pool(cliargs.cores)
