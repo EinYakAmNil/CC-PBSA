@@ -262,35 +262,35 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
 
-            search = DataCollector(data)
-            search.search_data()
+        search = DataCollector(data)
+        search.search_data()
 
-            print("G folded mean values:")
-            print(search.G_mean)
-            search.G.to_csv("G_fold.csv")
-            search.G_mean.to_csv("G_fold_mean.csv")
+        print("G folded mean values:")
+        print(search.G_mean)
+        search.G.to_csv("G_fold.csv")
+        search.G_mean.to_csv("G_fold_mean.csv")
 
-            search.dstability(gxg_table)
-            print("dG folded values:")
-            print(search.dG)
-            print("dG unfolded values (GXG):")
+        search.dstability(gxg_table)
+        print("dG folded values:")
+        print(search.dG)
+        print("dG unfolded values (GXG):")
 
-            if cliargs.no_concoord:
-                search.dG_unfld['-TS'] = 0
+        if cliargs.no_concoord:
+            search.dG_unfld['-TS'] = 0
 
-            print(search.dG_unfld)
-            search.dG.to_csv("dG_fold.csv")
-            search.dG_unfld.to_csv("dG_unfold.csv")
+        print(search.dG_unfld)
+        search.dG.to_csv("dG_fold.csv")
+        search.dG_unfld.to_csv("dG_unfold.csv")
 
-            search.ddstability()
-            print("ddG values:")
-            print("without fit:")
-            print(search.ddG)
-            search.ddG.to_csv("ddG.csv")
-            ddG_fit = search.fitstability(**parameters)
-            print("with fit:")
-            print(ddG_fit)
-            search.ddG.to_csv("ddG_fit.csv")
+        search.ddstability()
+        print("ddG values:")
+        print("without fit:")
+        print(search.ddG)
+        search.ddG.to_csv("ddG.csv")
+        ddG_fit = search.fitstability(**parameters)
+        print("with fit:")
+        print(ddG_fit)
+        search.ddG.to_csv("ddG_fit.csv")
 
     if cliargs.routine == 'affinity':
 
@@ -348,9 +348,9 @@ if __name__ == '__main__':
             pool.close()
             pool.join()
 
-            data.area()
-
             data.n = 0
+
+            data.area()
 
         else:
 
@@ -409,39 +409,39 @@ if __name__ == '__main__':
 
             data.area()
         
-            search = AffinityCollector(data)
-            search.search_data()
+        search = AffinityCollector(data)
+        search.search_data()
 
-            search.daffinity()
-            search.ddaffinity()
+        search.daffinity()
+        search.ddaffinity()
 
-            print("G values:")
-            print("bound")
-            print(search.G_bound_mean)
-            search.G_bound_mean.to_csv('G_bound.csv')
-            search.G_bound_mean.to_csv("G_bound_mean.csv")
-            print("unbound")
-            print(search.G_grp1_mean)
-            search.G_grp1.to_csv('G_grp1.csv')
-            search.G_grp1_mean.to_csv('G_grp1_mean.csv')
-            print(search.G_grp2_mean)
-            search.G_grp2.to_csv('G_grp2.csv')
-            search.G_grp2_mean.to_csv('G_grp2_mean.csv')
+        print("G values:")
+        print("bound")
+        print(search.G_bound_mean)
+        search.G_bound_mean.to_csv('G_bound.csv')
+        search.G_bound_mean.to_csv("G_bound_mean.csv")
+        print("unbound")
+        print(search.G_grp1_mean)
+        search.G_grp1.to_csv('G_grp1.csv')
+        search.G_grp1_mean.to_csv('G_grp1_mean.csv')
+        print(search.G_grp2_mean)
+        search.G_grp2.to_csv('G_grp2.csv')
+        search.G_grp2_mean.to_csv('G_grp2_mean.csv')
 
-            print("dG values:")
-            print("bound")
-            print(search.dG_bound)
-            search.dG_bound.to_csv('dG_bound.csv')
-            print("unbound")
-            print(search.dG_unbound)
-            search.dG_bound.to_csv('dG_unbound.csv')
+        print("dG values:")
+        print("bound")
+        print(search.dG_bound)
+        search.dG_bound.to_csv('dG_bound.csv')
+        print("unbound")
+        print(search.dG_unbound)
+        search.dG_bound.to_csv('dG_unbound.csv')
 
-            print("ddG values:")
-            print("without fit")
-            print(search.ddG)
-            search.ddG.to_csv('ddG.csv')
+        print("ddG values:")
+        print("without fit")
+        print(search.ddG)
+        search.ddG.to_csv('ddG.csv')
 
-            search.fitaffinity(**parameters)
-            print("with fit:")
-            print(search.ddG)
-            search.ddG.to_csv('ddG_fit.csv')
+        search.fitaffinity(**parameters)
+        print("with fit:")
+        print(search.ddG)
+        search.ddG.to_csv('ddG_fit.csv')

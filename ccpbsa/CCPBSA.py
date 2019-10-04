@@ -857,7 +857,7 @@ class AffinityGenerator(DataGenerator):
 
         os.chdir(self.wt)
 
-        if len(self) > 0:
+        if self.n > 0:
 
             for i in range(1, len(self)+1):
                 os.chdir(str(i))
