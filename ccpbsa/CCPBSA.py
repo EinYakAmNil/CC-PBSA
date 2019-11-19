@@ -220,7 +220,7 @@ def gmx(prog, **kwargs):
     """Run a GROMACS program with its flags by passing them in a list object.
     kwargs are passed to the subprocess.run method.
     """
-    gmx = subprocess.run(['gmx', '-quiet'] + prog, **kwargs)
+    gmx = subprocess.run(['/data/dist/gromacs_2019/bin/gmx', '-quiet'] + prog, **kwargs)
 
     return gmx
  
@@ -705,11 +705,11 @@ class AffinityGenerator(DataGenerator):
             **self.pipe,
             input=self.input['grompp']
         )
-        gmx(
-            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
-            **self.pipe,
-            input=self.input['mdrun']
-        )
+#        gmx(
+#            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+#            **self.pipe,
+#            input=self.input['mdrun']
+#        )
 
         fn = self.grp2
         gmx(
@@ -732,11 +732,11 @@ class AffinityGenerator(DataGenerator):
             **self.pipe,
             input=self.input['grompp']
         )
-        gmx(
-            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
-            **self.pipe,
-            input=self.input['mdrun']
-        )
+#        gmx(
+#            ['mdrun'] + self.flags['mdrun'] + ['-deffnm', fn],
+#            **self.pipe,
+#            input=self.input['mdrun']
+#        )
 
 
     def single_point_chains(self):

@@ -418,7 +418,7 @@ if __name__ == '__main__':
         print("G values:")
         print("bound")
         print(search.G_bound_mean)
-        search.G_bound_mean.to_csv('G_bound.csv')
+        search.G_bound.to_csv('G_bound.csv')
         search.G_bound_mean.to_csv("G_bound_mean.csv")
         print("unbound")
         print(search.G_grp1_mean)
