@@ -1,5 +1,4 @@
 import sys
-sys.path.append("/opt/pymol-python3/lib/")
 import os
 import shutil
 import subprocess
@@ -220,7 +219,7 @@ def gmx(prog, **kwargs):
     """Run a GROMACS program with its flags by passing them in a list object.
     kwargs are passed to the subprocess.run method.
     """
-    gmx = subprocess.run(['/data/dist/gromacs_2019/bin/gmx', '-quiet'] + prog, **kwargs)
+    gmx = subprocess.run(['gmx', '-quiet'] + prog, **kwargs)
 
     return gmx
  
