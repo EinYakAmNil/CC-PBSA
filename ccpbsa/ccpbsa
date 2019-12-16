@@ -3,83 +3,83 @@ import argparse
 from multiprocessing import Pool
 from ccpbsa import *
 
+cliparser = argparse.ArgumentParser()
+pkgpath = "/".join(__file__.split("/")[:-3] + ['ccpbsa'])
+
+cliparser.add_argument(
+    "routine",
+    help="The first argument chooses which routine to run",
+    choices={'stability', 'affinity', 'gxg'}
+)
+
+options = cliparser.add_argument_group("OPTIONS")
+
+options.add_argument(
+    "-w", "--wildtype",
+    help=".pdb file of the wildtype protein."
+)
+options.add_argument(
+    "-m", "--mutations",
+    help="a .txt file with the list of mutations. Each mutant separated \
+    by a newline. Multiple mutations in the same mutant are to be \
+    separated by comma."
+)
+options.add_argument(
+    "-f", "--flags",
+    help="The flags, which should be passed to CONCOORD and GROMACS. At \
+    least the number of structures in CONCOORD and the forcefield and water \
+    model should be specified in there",
+    default=pkgpath+'/parameters/flags.txt'
+)
+options.add_argument(
+    "-c", "--chains",
+    help="Name of chains in the .pdb file for the first protein group. \
+    Only needed in affinity calculation.",
+    default='A',
+    nargs='+'
+)
+options.add_argument(
+    "--fit-parameters",
+    help="scaling factors of the ddG calculations. Names should fit the \
+    kind of calculation. Default parameters depend on what is calculated",
+    default=pkgpath,
+)
+options.add_argument(
+    "--energy-mdp",
+    default=pkgpath+'/parameters/energy.mdp',
+    help=".mdp file for GROMACS Lennard-Jones Energy evaluations."
+)
+options.add_argument(
+    "--gxg-table",
+    default=pkgpath+'/parameters/GXG.csv',
+    help="GXG table used for stability change calculations."
+)
+options.add_argument(
+    "-v",
+    help="Print stdout and stderr of the programs.",
+    action='store_true'
+)
+options.add_argument(
+    "--no-concoord",
+    help="Run energy extraction from minimized structures only, without \
+    generating structure ensembles with CONCOORD.",
+    action='store_true'
+)
+options.add_argument(
+    '--cores',
+    default=0,
+    help="Specify the number of cores to use for multiprocessing, takes \
+    the maximum amount available per default.",
+    type=int
+)
+
+cliargs = cliparser.parse_args()
+gxg_table = os.path.abspath(cliargs.gxg_table)
+cliargs.flags = os.path.abspath(cliargs.flags)
+cliargs.fit_parameters = os.path.abspath(cliargs.fit_parameters)
+cliargs.energy_mdp = os.path.abspath(cliargs.energy_mdp)
+
 if __name__ == '__main__':
-    cliparser = argparse.ArgumentParser()
-    pkgpath = "/".join(__file__.split("/")[:-3] + ['ccpbsa'])
-
-    cliparser.add_argument(
-        "routine",
-        help="The first argument chooses which routine to run",
-        choices={'stability', 'affinity', 'gxg'}
-    )
-
-    options = cliparser.add_argument_group("OPTIONS")
-
-    options.add_argument(
-        "-w", "--wildtype",
-        help=".pdb file of the wildtype protein."
-    )
-    options.add_argument(
-        "-m", "--mutations",
-        help="a .txt file with the list of mutations. Each mutant separated \
-        by a newline. Multiple mutations in the same mutant are to be \
-        separated by comma."
-    )
-    options.add_argument(
-        "-f", "--flags",
-        help="The flags, which should be passed to CONCOORD and GROMACS. At \
-        least the number of structures in CONCOORD and the forcefield and water \
-        model should be specified in there",
-        default=pkgpath+'/parameters/flags.txt'
-    )
-    options.add_argument(
-        "-c", "--chains",
-        help="Name of chains in the .pdb file for the first protein group. \
-        Only needed in affinity calculation.",
-        default='A',
-        nargs='+'
-    )
-    options.add_argument(
-        "--fit-parameters",
-        help="scaling factors of the ddG calculations. Names should fit the \
-        kind of calculation. Default parameters depend on what is calculated",
-        default=pkgpath,
-    )
-    options.add_argument(
-        "--energy-mdp",
-        default=pkgpath+'/parameters/energy.mdp',
-        help=".mdp file for GROMACS Lennard-Jones Energy evaluations."
-    )
-    options.add_argument(
-        "--gxg-table",
-        default=pkgpath+'/parameters/GXG.csv',
-        help="GXG table used for stability change calculations."
-    )
-    options.add_argument(
-        "-v",
-        help="Print stdout and stderr of the programs.",
-        action='store_true'
-    )
-    options.add_argument(
-        "--no-concoord",
-        help="Run energy extraction from minimized structures only, without \
-        generating structure ensembles with CONCOORD.",
-        action='store_true'
-    )
-    options.add_argument(
-        '--cores',
-        default=0,
-        help="Specify the number of cores to use for multiprocessing, takes \
-        the maximum amount available per default.",
-        type=int
-    )
-
-    cliargs = cliparser.parse_args()
-    gxg_table = os.path.abspath(cliargs.gxg_table)
-    cliargs.flags = os.path.abspath(cliargs.flags)
-    cliargs.fit_parameters = os.path.abspath(cliargs.fit_parameters)
-    cliargs.energy_mdp = os.path.abspath(cliargs.energy_mdp)
-
 
     if cliargs.v:
         verbose = 1
